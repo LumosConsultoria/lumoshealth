@@ -84,12 +84,36 @@ async function structureTranscript(transcript, category = "medico") {
   }
 
   const fields = categoryInstructions[category] ?? categoryInstructions.medico;
-  const schema = {
+  let schema = {
     type: "object",
     additionalProperties: false,
     properties: Object.fromEntries(fields.map((field) => [field, { type: ["string", "null"] }])),
     required: fields,
   };
+  if (category === "medico") {
+    const nullableString = { type: ["string", "null"] };
+    schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        queixa_principal: nullableString,
+        hda: nullableString,
+        exame_fisico: nullableString,
+        cid10_sugerido: nullableString,
+        diagnostico_sugerido: nullableString,
+        conduta: nullableString,
+        exames_sugeridos: {
+          type: "array",
+          items: { type: "object", additionalProperties: false, properties: { nome: { type: "string" }, justificativa: { type: "string" } }, required: ["nome", "justificativa"] },
+        },
+        medicamentos_sugeridos: {
+          type: "array",
+          items: { type: "object", additionalProperties: false, properties: { nome: { type: "string" }, dose: nullableString, via: nullableString, frequencia: nullableString, duracao: nullableString, instrucoes: nullableString }, required: ["nome", "dose", "via", "frequencia", "duracao", "instrucoes"] },
+        },
+      },
+      required: [...fields, "exames_sugeridos", "medicamentos_sugeridos"],
+    };
+  }
   const result = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -103,7 +127,7 @@ async function structureTranscript(transcript, category = "medico") {
       input: [
         {
           role: "system",
-          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Atualize o registro com somente informações explicitamente presentes, em português do Brasil. Não invente dados, não repita perguntas do médico como se fossem respostas do paciente e não faça diagnóstico definitivo; o CID é apenas sugestão para revisão profissional. Use null quando ausente.",
+          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Extraia fatos somente quando explícitos e nunca trate perguntas como respostas. A conduta e os exames_sugeridos podem ser sugestões prudentes para aprovação médica. Preencha medicamentos_sugeridos somente quando o médico tiver prescrito, renovado, mantido com intenção prescritiva ou alterado um medicamento na conversa; relato de uso do paciente não é receita. Não faça diagnóstico definitivo. Use null para textos ausentes e arrays vazios quando não houver exames ou medicamentos.",
         },
         { role: "user", content: transcript },
       ],

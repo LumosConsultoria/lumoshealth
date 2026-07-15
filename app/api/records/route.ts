@@ -3,7 +3,9 @@ import { getDb } from "../../../db";
 import {
   clinicalRecords,
   encounters,
+  examRequests,
   patients,
+  prescriptions,
   professionals,
   tenants,
   units,
@@ -39,7 +41,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as { transcript?: string; category?: string };
+    const payload = (await request.json()) as {
+      transcript?: string;
+      category?: string;
+      structuredData?: Record<string, unknown> & {
+        exames_sugeridos?: Array<{ nome?: string; justificativa?: string }>;
+        medicamentos_sugeridos?: Array<{ nome?: string; dose?: string | null; via?: string | null; frequencia?: string | null; duracao?: string | null; instrucoes?: string | null }>;
+      };
+    };
     if (!payload.transcript?.trim()) {
       return Response.json({ error: "A transcrição é obrigatória." }, { status: 400 });
     }
@@ -53,14 +62,36 @@ export async function POST(request: Request) {
       professionalId: demo.professionalId,
       category: payload.category ?? "consulta_medica",
       rawTranscript: payload.transcript,
-      structuredData: {
-        queixa_principal: "Cefaleia leve e aferição de pressão elevada desde ontem.",
-        cid10: "I10",
-        status: "reviewed",
-      },
+      structuredData: { ...(payload.structuredData ?? {}), status: "reviewed" },
       signedAt: new Date().toISOString(),
       syncStatus: "synced",
     }).returning();
+
+    for (const exam of payload.structuredData?.exames_sugeridos ?? []) {
+      if (!exam.nome?.trim()) continue;
+      await db.insert(examRequests).values({
+        id: crypto.randomUUID(),
+        tenantId: demo.tenantId,
+        encounterId: demo.encounterId,
+        professionalId: demo.professionalId,
+        examType: exam.nome.trim(),
+        urgent: false,
+      });
+    }
+
+    for (const medication of payload.structuredData?.medicamentos_sugeridos ?? []) {
+      if (!medication.nome?.trim()) continue;
+      await db.insert(prescriptions).values({
+        id: crypto.randomUUID(),
+        tenantId: demo.tenantId,
+        encounterId: demo.encounterId,
+        professionalId: demo.professionalId,
+        medication: medication.nome.trim(),
+        dosage: [medication.dose, medication.via, medication.frequencia].filter(Boolean).join(" • ") || "Conforme orientação médica",
+        instructions: medication.instrucoes ?? "Conforme orientação médica",
+        duration: medication.duracao ?? "Não informada",
+      });
+    }
     return Response.json({ record }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Não foi possível salvar o registro." }, { status: 500 });

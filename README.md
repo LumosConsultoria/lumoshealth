@@ -9,6 +9,8 @@ MVP de Prontuário Eletrônico do Paciente para atenção primária. A experiên
 - Transcrição ao vivo por interlocutor com Deepgram Nova-3 (`pt-BR`) e diarização.
 - Estruturação clínica incremental pela OpenAI Responses API, com Structured Outputs e schemas por categoria profissional.
 - Campos sugeridos visíveis durante a consulta e aprovação profissional antes de qualquer registro.
+- Conduta sugerida pela IA, com exames e receitas em filas separadas de aprovação; somente itens aprovados entram no atendimento final.
+- Timeline clicável com detalhes do registro clínico, exames solicitados e receitas emitidas.
 - Receita, exames e atalhos de teclado em poucos passos.
 - PWA offline-first com fila local temporária para registros pendentes.
 - Modelo multi-tenant para D1 (demo publicada) e PostgreSQL com RLS (produção).

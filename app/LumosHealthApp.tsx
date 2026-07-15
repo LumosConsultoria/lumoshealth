@@ -9,6 +9,9 @@ type QuickPanel = "prescription" | "exam" | null;
 
 type SpeakerRole = "medico" | "paciente";
 type SpeakerSegment = { id: string; speaker: SpeakerRole; text: string };
+type SuggestedExam = { nome: string; justificativa: string };
+type SuggestedMedication = { nome: string; dose: string | null; via: string | null; frequencia: string | null; duracao: string | null; instrucoes: string | null };
+type ApprovalStatus = "pending" | "approved" | "rejected";
 type StructuredRecord = {
   queixa_principal: string;
   hda: string;
@@ -16,6 +19,8 @@ type StructuredRecord = {
   cid10_sugerido: string;
   diagnostico_sugerido: string;
   conduta: string;
+  exames_sugeridos: SuggestedExam[];
+  medicamentos_sugeridos: SuggestedMedication[];
 };
 type DirectDeepgramConnection = {
   on: (event: "message" | "error" | "close", callback: (message: unknown) => void) => void;
@@ -41,6 +46,8 @@ const EMPTY_RECORD: StructuredRecord = {
   cid10_sugerido: "",
   diagnostico_sugerido: "",
   conduta: "",
+  exames_sugeridos: [],
+  medicamentos_sugeridos: [],
 };
 
 const FINAL_RECORD: StructuredRecord = {
@@ -50,6 +57,13 @@ const FINAL_RECORD: StructuredRecord = {
   cid10_sugerido: "I10",
   diagnostico_sugerido: "Hipertensão arterial sistêmica",
   conduta: "Reforçar medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias.",
+  exames_sugeridos: [
+    { nome: "Creatinina sérica", justificativa: "Monitorar função renal no acompanhamento da hipertensão." },
+    { nome: "Potássio sérico", justificativa: "Monitorar eletrólitos durante uso de losartana." },
+  ],
+  medicamentos_sugeridos: [
+    { nome: "Losartana", dose: "50 mg", via: "Oral", frequencia: "1 vez ao dia, pela manhã", duracao: "Uso contínuo", instrucoes: "Manter uso regular." },
+  ],
 };
 
 const SAMPLE_SEGMENTS: Array<Omit<SpeakerSegment, "id"> & { structure: Partial<StructuredRecord> }> = [
@@ -58,7 +72,8 @@ const SAMPLE_SEGMENTS: Array<Omit<SpeakerSegment, "id"> & { structure: Partial<S
   { speaker: "medico", text: "Teve enjoo, vômito, visão embaçada ou alguma fraqueza?", structure: {} },
   { speaker: "paciente", text: "Não, nada disso. Estou tomando a losartana de cinquenta toda manhã, sem esquecer.", structure: { hda: "Nega náusea, vômitos, alteração visual e fraqueza. Uso regular de losartana 50 mg pela manhã." } },
   { speaker: "medico", text: "Sua pressão hoje está 148 por 92. No exame, está orientada, hidratada e sem déficit neurológico.", structure: { exame_fisico: "BEG, orientada, hidratada, sem déficit neurológico. PA 148/92 mmHg.", cid10_sugerido: "I10", diagnostico_sugerido: "Hipertensão arterial sistêmica" } },
-  { speaker: "medico", text: "Vamos reforçar os cuidados, pedir creatinina e potássio e rever em trinta dias.", structure: { conduta: "Reforçar medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias." } },
+  { speaker: "medico", text: "Vamos reforçar os cuidados, pedir creatinina e potássio e rever em trinta dias.", structure: { conduta: "Reforçar medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias.", exames_sugeridos: FINAL_RECORD.exames_sugeridos } },
+  { speaker: "medico", text: "Vou renovar a losartana de cinquenta miligramas: um comprimido pela manhã, uso contínuo.", structure: { medicamentos_sugeridos: FINAL_RECORD.medicamentos_sugeridos } },
 ];
 
 const SAMPLE_TRANSCRIPT = SAMPLE_SEGMENTS.map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`).join("\n");
@@ -193,6 +208,9 @@ export default function LumosHealthApp() {
   const [interimSegment, setInterimSegment] = useState<SpeakerSegment | null>(null);
   const [structured, setStructured] = useState<StructuredRecord>(EMPTY_RECORD);
   const [voiceMode, setVoiceMode] = useState<"demo" | "connecting" | "live">("demo");
+  const [examDecisions, setExamDecisions] = useState<Record<number, ApprovalStatus>>({});
+  const [medicationDecisions, setMedicationDecisions] = useState<Record<number, ApprovalStatus>>({});
+  const [timelineDetail, setTimelineDetail] = useState<"current" | "triage" | "followup" | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const voiceSocket = useRef<WebSocket | null>(null);
@@ -212,10 +230,13 @@ export default function LumosHealthApp() {
 
   const mergeStructure = useCallback((update: Partial<StructuredRecord>) => {
     const next = { ...structuredRef.current };
-    for (const key of Object.keys(EMPTY_RECORD) as Array<keyof StructuredRecord>) {
+    const textFields: Array<Exclude<keyof StructuredRecord, "exames_sugeridos" | "medicamentos_sugeridos">> = ["queixa_principal", "hda", "exame_fisico", "cid10_sugerido", "diagnostico_sugerido", "conduta"];
+    for (const key of textFields) {
       const value = update[key];
       if (typeof value === "string" && value.trim()) next[key] = value;
     }
+    if (Array.isArray(update.exames_sugeridos)) next.exames_sugeridos = update.exames_sugeridos;
+    if (Array.isArray(update.medicamentos_sugeridos)) next.medicamentos_sugeridos = update.medicamentos_sugeridos;
     structuredRef.current = next;
     setStructured(next);
   }, []);
@@ -279,6 +300,8 @@ export default function LumosHealthApp() {
     syncSegments([]);
     structuredRef.current = EMPTY_RECORD;
     setStructured(EMPTY_RECORD);
+    setExamDecisions({});
+    setMedicationDecisions({});
     setInterimSegment(null);
     setTimer(0);
     setStage("listening");
@@ -509,15 +532,43 @@ export default function LumosHealthApp() {
     setToast(`Template de ${template} preparado.`);
   }
 
-  function updateStructured(field: keyof StructuredRecord, value: string) {
+  const pendingApprovalCount = structured.exames_sugeridos.filter((_, index) => (examDecisions[index] ?? "pending") === "pending").length
+    + structured.medicamentos_sugeridos.filter((_, index) => (medicationDecisions[index] ?? "pending") === "pending").length;
+  const approvedExams = structured.exames_sugeridos.filter((_, index) => examDecisions[index] === "approved");
+  const approvedMedications = structured.medicamentos_sugeridos.filter((_, index) => medicationDecisions[index] === "approved");
+
+  function updateStructured(field: Exclude<keyof StructuredRecord, "exames_sugeridos" | "medicamentos_sugeridos">, value: string) {
     const next = { ...structuredRef.current, [field]: value };
     structuredRef.current = next;
     setStructured(next);
   }
 
+  function updateExam(index: number, field: keyof SuggestedExam, value: string) {
+    const exams = structured.exames_sugeridos.map((exam, itemIndex) => itemIndex === index ? { ...exam, [field]: value } : exam);
+    const next = { ...structuredRef.current, exames_sugeridos: exams };
+    structuredRef.current = next;
+    setStructured(next);
+  }
+
+  function updateMedication(index: number, field: keyof SuggestedMedication, value: string) {
+    const medications = structured.medicamentos_sugeridos.map((medication, itemIndex) => itemIndex === index ? { ...medication, [field]: value || null } : medication);
+    const next = { ...structuredRef.current, medicamentos_sugeridos: medications };
+    structuredRef.current = next;
+    setStructured(next);
+  }
+
   async function confirmRecord() {
+    if (pendingApprovalCount > 0) {
+      setToast(`Revise ${pendingApprovalCount} ${pendingApprovalCount === 1 ? "sugestão pendente" : "sugestões pendentes"} antes de confirmar.`);
+      return;
+    }
     setStage("saved");
-    const draft = { transcript: transcript || SAMPLE_TRANSCRIPT, category: "consulta_medica" };
+    const finalizedRecord = {
+      ...structured,
+      exames_sugeridos: approvedExams,
+      medicamentos_sugeridos: approvedMedications,
+    };
+    const draft = { transcript: transcript || SAMPLE_TRANSCRIPT, category: "consulta_medica", structuredData: finalizedRecord };
     if (!online) {
       localStorage.setItem("lumos.pending-record", JSON.stringify(draft));
       setToast("Registro salvo neste dispositivo. Sincronizaremos depois.");
@@ -636,7 +687,9 @@ export default function LumosHealthApp() {
                         <div className={structured.hda ? "filled" : ""}><dt>História atual</dt><dd>{structured.hda || "Aguardando informações…"}</dd></div>
                         <div className={structured.exame_fisico ? "filled" : ""}><dt>Exame físico</dt><dd>{structured.exame_fisico || "Ainda não mencionado"}</dd></div>
                         <div className={structured.diagnostico_sugerido ? "filled" : ""}><dt>Hipótese / CID sugerido</dt><dd>{structured.diagnostico_sugerido ? `${structured.diagnostico_sugerido}${structured.cid10_sugerido ? ` • ${structured.cid10_sugerido}` : ""}` : "Sem sugestão ainda"}</dd></div>
-                        <div className={structured.conduta ? "filled" : ""}><dt>Conduta</dt><dd>{structured.conduta || "Aguardando definição do plano…"}</dd></div>
+                        <div className={structured.conduta ? "filled" : ""}><dt>Conduta sugerida pela IA</dt><dd>{structured.conduta || "Aguardando contexto suficiente…"}</dd></div>
+                        <div className={structured.exames_sugeridos.length ? "filled" : ""}><dt>Exames para aprovação</dt><dd>{structured.exames_sugeridos.length ? `${structured.exames_sugeridos.length} ${structured.exames_sugeridos.length === 1 ? "exame sugerido" : "exames sugeridos"}` : "Nenhum exame sugerido ainda"}</dd></div>
+                        <div className={structured.medicamentos_sugeridos.length ? "filled" : ""}><dt>Receitas para aprovação</dt><dd>{structured.medicamentos_sugeridos.length ? `${structured.medicamentos_sugeridos.length} ${structured.medicamentos_sugeridos.length === 1 ? "medicamento identificado" : "medicamentos identificados"}` : "Nenhuma prescrição identificada"}</dd></div>
                       </dl>
                     </section>
                   </div>
@@ -665,11 +718,34 @@ export default function LumosHealthApp() {
                     <label className="field-span-2">História da doença atual<textarea value={structured.hda} onChange={(event) => updateStructured("hda", event.target.value)} disabled={stage === "saved"} /></label>
                     <label>Exame físico<input value={structured.exame_fisico} onChange={(event) => updateStructured("exame_fisico", event.target.value)} disabled={stage === "saved"} /></label>
                     <label>Hipótese / CID sugerido {structured.cid10_sugerido && <span className="cid-chip">{structured.cid10_sugerido}</span>}<input value={structured.diagnostico_sugerido} onChange={(event) => updateStructured("diagnostico_sugerido", event.target.value)} disabled={stage === "saved"} /></label>
-                    <label className="field-span-2">Conduta<textarea value={structured.conduta} onChange={(event) => updateStructured("conduta", event.target.value)} disabled={stage === "saved"} /></label>
+                    <label className="field-span-2">Conduta sugerida pela IA <span className="confidence">Revisão obrigatória</span><textarea value={structured.conduta} onChange={(event) => updateStructured("conduta", event.target.value)} disabled={stage === "saved"} /></label>
                   </div>
+                  <section className="approval-section" aria-label="Sugestões aguardando aprovação médica">
+                    <div className="approval-heading">
+                      <div><span className="eyebrow teal">AÇÕES CLÍNICAS</span><h4>Exames e receitas</h4></div>
+                      <span className={pendingApprovalCount ? "pending-count" : "resolved-count"}>{pendingApprovalCount ? `${pendingApprovalCount} aguardando aprovação` : "Todas as sugestões revisadas"}</span>
+                    </div>
+                    {!structured.exames_sugeridos.length && !structured.medicamentos_sugeridos.length && <p className="empty-approval">Nenhum exame ou medicamento foi sugerido a partir desta conversa.</p>}
+                    {!!structured.exames_sugeridos.length && <div className="approval-list"><h5>Exames sugeridos</h5>{structured.exames_sugeridos.map((exam, index) => {
+                      const status = examDecisions[index] ?? "pending";
+                      return <article className={`approval-card status-${status}`} key={`exam-${index}`}>
+                        <span className="action-kind">EXAME</span>
+                        <div className="approval-fields"><input aria-label={`Nome do exame ${index + 1}`} value={exam.nome} onChange={(event) => updateExam(index, "nome", event.target.value)} disabled={stage === "saved" || status === "rejected"} /><textarea aria-label={`Justificativa do exame ${index + 1}`} value={exam.justificativa} onChange={(event) => updateExam(index, "justificativa", event.target.value)} disabled={stage === "saved" || status === "rejected"} /></div>
+                        <div className="approval-controls"><span>{status === "pending" ? "Aguardando aprovação" : status === "approved" ? "Aprovado para o atendimento" : "Não incluir"}</span>{stage !== "saved" && <div><button className="reject-action" onClick={() => setExamDecisions((current) => ({ ...current, [index]: "rejected" }))}>Rejeitar</button><button className="approve-action" onClick={() => setExamDecisions((current) => ({ ...current, [index]: "approved" }))}>Aprovar</button></div>}</div>
+                      </article>;
+                    })}</div>}
+                    {!!structured.medicamentos_sugeridos.length && <div className="approval-list"><h5>Receitas identificadas na conversa</h5>{structured.medicamentos_sugeridos.map((medication, index) => {
+                      const status = medicationDecisions[index] ?? "pending";
+                      return <article className={`approval-card medication-card status-${status}`} key={`medication-${index}`}>
+                        <span className="action-kind prescription-kind">RECEITA</span>
+                        <div className="medication-fields"><input aria-label={`Medicamento ${index + 1}`} value={medication.nome} onChange={(event) => updateMedication(index, "nome", event.target.value)} disabled={stage === "saved" || status === "rejected"} /><input aria-label={`Dose ${index + 1}`} value={medication.dose ?? ""} onChange={(event) => updateMedication(index, "dose", event.target.value)} disabled={stage === "saved" || status === "rejected"} /><input aria-label={`Frequência ${index + 1}`} value={medication.frequencia ?? ""} onChange={(event) => updateMedication(index, "frequencia", event.target.value)} disabled={stage === "saved" || status === "rejected"} /><input aria-label={`Duração ${index + 1}`} value={medication.duracao ?? ""} onChange={(event) => updateMedication(index, "duracao", event.target.value)} disabled={stage === "saved" || status === "rejected"} /></div>
+                        <div className="approval-controls"><span>{status === "pending" ? "Aguardando aprovação" : status === "approved" ? "Aprovada para o atendimento" : "Não incluir"}</span>{stage !== "saved" && <div><button className="reject-action" onClick={() => setMedicationDecisions((current) => ({ ...current, [index]: "rejected" }))}>Rejeitar</button><button className="approve-action" onClick={() => setMedicationDecisions((current) => ({ ...current, [index]: "approved" }))}>Aprovar receita</button></div>}</div>
+                      </article>;
+                    })}</div>}
+                  </section>
                   <details className="raw-transcript"><summary>Ver transcrição original</summary><p>{transcript || SAMPLE_TRANSCRIPT}</p></details>
                   <div className="review-actions">
-                    {stage === "review" ? <><span>Todos os campos podem ser editados.</span><button className="primary-button" onClick={confirmRecord}>Confirmar registro <span>✓</span></button></> : <><span className="saved-note"><b>✓</b> Assinado por Dra. Ana Lima às 09:51</span><button className="quiet-button" onClick={() => setStage("idle")}>Novo registro</button></>}
+                    {stage === "review" ? <><span>{pendingApprovalCount ? "Decida sobre cada exame e receita antes de assinar." : "Tudo revisado. Somente itens aprovados serão incluídos."}</span><button className="primary-button" onClick={confirmRecord} disabled={pendingApprovalCount > 0}>{pendingApprovalCount ? `Resolver ${pendingApprovalCount} pendências` : "Confirmar registro"} <span>✓</span></button></> : <><span className="saved-note"><b>✓</b> Assinado por Dra. Ana Lima às 09:51</span><button className="quiet-button" onClick={() => setStage("idle")}>Novo registro</button></>}
                   </div>
                 </div>
               )}
@@ -686,17 +762,17 @@ export default function LumosHealthApp() {
               {stage === "saved" && (
                 <article className="timeline-item newest">
                   <div className="timeline-marker teal-marker">AL</div>
-                  <div className="timeline-card"><div className="timeline-meta"><strong>Consulta médica</strong><span>09:51 • Dra. Ana Lima</span></div><p>Cefaleia leve associada a PA elevada. Sem sinais de alarme. CID I10.</p><div className="timeline-tags"><span>Conduta registrada</span><span>Exame solicitado</span></div></div>
+                  <button className="timeline-card timeline-card-button" onClick={() => setTimelineDetail("current")}><div className="timeline-meta"><strong>Consulta médica</strong><span>09:51 • Dra. Ana Lima</span></div><p>{structured.queixa_principal || "Consulta registrada e assinada."}</p><div className="timeline-tags"><span>Conduta registrada</span>{approvedExams.length > 0 && <span>{approvedExams.length} {approvedExams.length === 1 ? "exame solicitado" : "exames solicitados"}</span>}{approvedMedications.length > 0 && <span>{approvedMedications.length} {approvedMedications.length === 1 ? "receita emitida" : "receitas emitidas"}</span>}</div><small className="open-record">Abrir atendimento →</small></button>
                 </article>
               )}
               <article className="timeline-item">
                 <div className="timeline-marker">JM</div>
-                <div className="timeline-card"><div className="timeline-meta"><strong>Triagem de enfermagem</strong><span>09:28 • Enf. João Mendes</span></div><div className="vitals"><span><small>PA</small><b>148/92</b> mmHg</span><span><small>FC</small><b>78</b> bpm</span><span><small>SpO₂</small><b>98</b> %</span><span><small>Glicemia</small><b>126</b> mg/dL</span></div><p>Refere cefaleia leve desde ontem. Nega outros sintomas. Classificação: não urgente.</p></div>
+                <button className="timeline-card timeline-card-button" onClick={() => setTimelineDetail("triage")}><div className="timeline-meta"><strong>Triagem de enfermagem</strong><span>09:28 • Enf. João Mendes</span></div><div className="vitals"><span><small>PA</small><b>148/92</b> mmHg</span><span><small>FC</small><b>78</b> bpm</span><span><small>SpO₂</small><b>98</b> %</span><span><small>Glicemia</small><b>126</b> mg/dL</span></div><p>Refere cefaleia leve desde ontem. Nega outros sintomas. Classificação: não urgente.</p><small className="open-record">Abrir registro →</small></button>
               </article>
               <div className="past-label"><span>12 MAI</span><i /></div>
               <article className="timeline-item compact">
                 <div className="timeline-marker muted">RC</div>
-                <div className="timeline-card"><div className="timeline-meta"><strong>Acompanhamento de hipertensão</strong><span>12/05/2026 • Dr. Rafael Costa</span></div><p>PA controlada. Mantida losartana 50 mg/dia. Orientações de dieta e atividade física.</p></div>
+                <button className="timeline-card timeline-card-button" onClick={() => setTimelineDetail("followup")}><div className="timeline-meta"><strong>Acompanhamento de hipertensão</strong><span>12/05/2026 • Dr. Rafael Costa</span></div><p>PA controlada. Mantida losartana 50 mg/dia. Orientações de dieta e atividade física.</p><div className="timeline-tags"><span>Receita emitida</span></div><small className="open-record">Abrir atendimento →</small></button>
               </article>
             </section>
           </section>
@@ -749,6 +825,21 @@ export default function LumosHealthApp() {
               </div>
             )}
             <div className="modal-actions"><button className="quiet-button" onClick={() => setQuickPanel(null)}>Cancelar</button><button className="primary-button" onClick={() => { setQuickPanel(null); setToast(quickPanel === "prescription" ? "Receita adicionada ao atendimento." : "Pedido de exame adicionado ao atendimento."); }}>Adicionar ao atendimento <span>→</span></button></div>
+          </section>
+        </div>
+      )}
+
+      {timelineDetail && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setTimelineDetail(null)}>
+          <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><div><span className="eyebrow teal">DETALHES DO ATENDIMENTO</span><h2 id="record-modal-title">{timelineDetail === "current" ? "Consulta médica" : timelineDetail === "triage" ? "Triagem de enfermagem" : "Acompanhamento de hipertensão"}</h2></div><button onClick={() => setTimelineDetail(null)} aria-label="Fechar">×</button></div>
+            <div className="record-summary-bar"><span>{timelineDetail === "current" ? "Hoje, 09:51 • Dra. Ana Lima" : timelineDetail === "triage" ? "Hoje, 09:28 • Enf. João Mendes" : "12/05/2026 • Dr. Rafael Costa"}</span><b>✓ Registro assinado</b></div>
+            <div className="record-detail-body">
+              <section className="record-detail-section"><h3>Registro clínico</h3>{timelineDetail === "current" ? <><p><strong>Queixa principal</strong>{structured.queixa_principal || "Não informada"}</p><p><strong>História atual</strong>{structured.hda || "Não informada"}</p><p><strong>Exame físico</strong>{structured.exame_fisico || "Não informado"}</p><p><strong>Hipótese</strong>{structured.diagnostico_sugerido || "Não informada"}{structured.cid10_sugerido ? ` • CID ${structured.cid10_sugerido}` : ""}</p><p><strong>Conduta aprovada</strong>{structured.conduta || "Não informada"}</p></> : timelineDetail === "triage" ? <><p><strong>Motivo da procura</strong>Cefaleia leve desde ontem. Nega outros sintomas.</p><div className="detail-vitals"><span>PA <b>148/92</b></span><span>FC <b>78 bpm</b></span><span>SpO₂ <b>98%</b></span><span>Glicemia <b>126 mg/dL</b></span></div><p><strong>Classificação</strong>Não urgente</p></> : <><p><strong>Evolução</strong>PA controlada. Sem queixas ou sinais de alarme.</p><p><strong>Conduta</strong>Mantidas orientações de dieta, atividade física e tratamento anti-hipertensivo.</p></>}</section>
+              <section className="record-detail-section"><h3>Exames solicitados</h3>{timelineDetail === "current" ? (approvedExams.length ? <ul>{approvedExams.map((exam, index) => <li key={`detail-exam-${index}`}><b>{exam.nome}</b><span>{exam.justificativa}</span></li>)}</ul> : <p className="empty-detail">Nenhum exame aprovado neste atendimento.</p>) : <p className="empty-detail">Nenhum exame solicitado neste registro.</p>}</section>
+              <section className="record-detail-section"><h3>Receitas emitidas</h3>{timelineDetail === "current" ? (approvedMedications.length ? <ul>{approvedMedications.map((medication, index) => <li key={`detail-medication-${index}`}><b>{medication.nome} {medication.dose}</b><span>{[medication.via, medication.frequencia, medication.duracao].filter(Boolean).join(" • ")}</span></li>)}</ul> : <p className="empty-detail">Nenhuma receita aprovada neste atendimento.</p>) : timelineDetail === "followup" ? <ul><li><b>Losartana 50 mg</b><span>Via oral • 1 comprimido pela manhã • Uso contínuo</span></li></ul> : <p className="empty-detail">Nenhuma receita emitida neste registro.</p>}</section>
+            </div>
+            <div className="modal-actions"><button className="primary-button" onClick={() => setTimelineDetail(null)}>Fechar atendimento</button></div>
           </section>
         </div>
       )}

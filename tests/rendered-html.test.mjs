@@ -18,6 +18,9 @@ test("builds the Lumos Health clinical workspace", async () => {
   assert.match(app, /Atenda normalmente\. A Lumos acompanha\./);
   assert.match(app, /REGISTRO SENDO ESTRUTURADO/);
   assert.match(app, /NEXT_PUBLIC_VOICE_WS_URL/);
+  assert.match(app, /Aguardando aprovação/);
+  assert.match(app, /Receitas identificadas na conversa/);
+  assert.match(app, /Abrir atendimento/);
   assert.match(app, /UBS Jardim Esperança/);
   assert.match(app, /Ctrl Space/);
   assert.match(css, /--teal:\s*#0d6c68/);
@@ -39,6 +42,8 @@ test("exposes PWA and OpenAI structured-output integration", async () => {
   assert.match(serviceWorker, /lumos-health-shell-v1/);
   assert.match(structureRoute, /api\.openai\.com\/v1\/responses/);
   assert.match(structureRoute, /type:\s*"json_schema"/);
+  assert.match(structureRoute, /exames_sugeridos/);
+  assert.match(structureRoute, /medicamentos_sugeridos/);
   assert.doesNotMatch(structureRoute, /Cefaleia leve|Hipertensão arterial sistêmica/);
   assert.doesNotMatch(structureRoute, /anthropic|claude/i);
   assert.match(deepgramTokenRoute, /auth\/grant/);

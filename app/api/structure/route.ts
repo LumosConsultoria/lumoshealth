@@ -7,6 +7,8 @@ const EMPTY_RECORD = {
   cid10_sugerido: null,
   diagnostico_sugerido: null,
   conduta: null,
+  exames_sugeridos: [],
+  medicamentos_sugeridos: [],
 };
 
 const nullableString = { type: ["string", "null"] };
@@ -33,6 +35,45 @@ for (const definition of Object.values(schemas)) {
     required: definition.fields,
   };
 }
+
+schemas.medico.schema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    queixa_principal: nullableString,
+    hda: nullableString,
+    exame_fisico: nullableString,
+    cid10_sugerido: nullableString,
+    diagnostico_sugerido: nullableString,
+    conduta: nullableString,
+    exames_sugeridos: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: { nome: { type: "string" }, justificativa: { type: "string" } },
+        required: ["nome", "justificativa"],
+      },
+    },
+    medicamentos_sugeridos: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          nome: { type: "string" },
+          dose: nullableString,
+          via: nullableString,
+          frequencia: nullableString,
+          duracao: nullableString,
+          instrucoes: nullableString,
+        },
+        required: ["nome", "dose", "via", "frequencia", "duracao", "instrucoes"],
+      },
+    },
+  },
+  required: ["queixa_principal", "hda", "exame_fisico", "cid10_sugerido", "diagnostico_sugerido", "conduta", "exames_sugeridos", "medicamentos_sugeridos"],
+};
 
 function outputText(result: { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> }) {
   for (const item of result.output ?? []) {
@@ -68,7 +109,7 @@ export async function POST(request: NextRequest) {
       input: [
         {
           role: "system",
-          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Atualize o registro com somente informações explicitamente presentes, em português do Brasil. Não invente dados e não trate perguntas do médico como respostas do paciente. Não faça diagnóstico definitivo; o CID é apenas uma sugestão para revisão profissional. Use null quando um dado estiver ausente.",
+          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Extraia fatos somente quando estiverem explícitos e nunca trate perguntas como respostas. A conduta e os exames_sugeridos podem ser sugestões clínicas prudentes baseadas no contexto, sempre sujeitas à aprovação médica. Preencha medicamentos_sugeridos somente quando o médico tiver prescrito, renovado, mantido com intenção prescritiva ou alterado um medicamento na conversa; nunca transforme apenas o relato de uso do paciente em receita. Não faça diagnóstico definitivo; o CID é apenas sugestão. Use null quando um texto estiver ausente e arrays vazios quando não houver exames ou medicamentos.",
         },
         { role: "user", content: body.transcript },
       ],
