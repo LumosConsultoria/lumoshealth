@@ -1,0 +1,10 @@
+{
+  "name": "Lumos Health",
+  "short_name": "Lumos",
+  "description": "Prontuário clínico inteligente e offline-first.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f3",
+  "theme_color": "#0d5c59",
+  "lang": "pt-BR"
+}
