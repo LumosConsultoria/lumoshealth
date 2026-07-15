@@ -103,7 +103,7 @@ async function structureTranscript(transcript, category = "medico") {
       input: [
         {
           role: "system",
-          content: "Você é o copiloto clínico da Lumos Health. Extraia somente informações presentes na transcrição em português do Brasil. Não faça diagnóstico definitivo; o CID é apenas sugestão para revisão profissional. Use null quando ausente.",
+          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Atualize o registro com somente informações explicitamente presentes, em português do Brasil. Não invente dados, não repita perguntas do médico como se fossem respostas do paciente e não faça diagnóstico definitivo; o CID é apenas sugestão para revisão profissional. Use null quando ausente.",
         },
         { role: "user", content: transcript },
       ],
@@ -157,32 +157,113 @@ voiceServer.on("connection", (client, request) => {
     smart_format: "true",
     punctuate: "true",
     interim_results: "true",
-    endpointing: "300",
-    encoding: "opus",
+    endpointing: "450",
+    utterances: "true",
+    vad_events: "true",
+    diarize_model: "latest",
   });
   const deepgram = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` },
   });
-  let finalTranscript = "";
+  const finalSegments = [];
+  let structureTimer;
+  let structureBusy = false;
+  let structurePending = false;
+  let structureRevision = 0;
 
-  deepgram.addEventListener("open", () => client.send(JSON.stringify({ type: "ready" })));
-  deepgram.addEventListener("message", (event) => {
-    const payload = JSON.parse(event.data.toString());
-    const text = payload.channel?.alternatives?.[0]?.transcript ?? "";
-    if (payload.is_final && text) finalTranscript += `${text} `;
-    if (text && client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: "transcript", text, final: Boolean(payload.is_final) }));
+  const sendClient = (message) => {
+    if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(message));
+  };
+
+  const roleForSpeaker = (speaker) => Number(speaker ?? 0) === 0 ? "medico" : "paciente";
+  const transcriptForStructure = () => finalSegments
+    .map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`)
+    .join("\n");
+
+  async function publishStructure() {
+    const transcript = transcriptForStructure();
+    if (transcript.length < 45) return;
+    if (structureBusy) {
+      structurePending = true;
+      return;
     }
+    structureBusy = true;
+    structurePending = false;
+    try {
+      const data = await structureTranscript(transcript, category);
+      structureRevision += 1;
+      sendClient({ type: "structure", data, revision: structureRevision });
+    } catch (error) {
+      sendClient({ type: "structure_error", recoverable: true, message: error.message });
+    } finally {
+      structureBusy = false;
+      if (structurePending) {
+        structureTimer = setTimeout(publishStructure, 250);
+      }
+    }
+  }
+
+  function scheduleStructure(delay = 1200) {
+    clearTimeout(structureTimer);
+    structureTimer = setTimeout(publishStructure, delay);
+  }
+
+  function segmentsFromAlternative(alternative, fallbackText) {
+    const words = alternative?.words ?? [];
+    if (!words.length) return fallbackText ? [{ speaker: "medico", text: fallbackText }] : [];
+    const grouped = [];
+    for (const word of words) {
+      const speaker = roleForSpeaker(word.speaker);
+      const text = word.punctuated_word ?? word.word ?? "";
+      const last = grouped.at(-1);
+      if (!last || last.speaker !== speaker) grouped.push({ speaker, words: [text] });
+      else last.words.push(text);
+    }
+    return grouped.map((group) => ({ speaker: group.speaker, text: group.words.filter(Boolean).join(" ") }));
+  }
+
+  deepgram.addEventListener("open", () => sendClient({ type: "ready", diarization: true }));
+  deepgram.addEventListener("message", (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data.toString());
+    } catch {
+      return;
+    }
+    const alternative = payload.channel?.alternatives?.[0];
+    const text = alternative?.transcript ?? "";
+    if (!text) return;
+    const speakerSegments = segmentsFromAlternative(alternative, text);
+    for (const [index, segment] of speakerSegments.entries()) {
+      const normalized = { ...segment, text: segment.text.trim() };
+      if (!normalized.text) continue;
+      const id = `${payload.start ?? Date.now()}-${index}-${normalized.speaker}`;
+      if (payload.is_final) finalSegments.push({ id, ...normalized });
+      sendClient({ type: "transcript", id, ...normalized, final: Boolean(payload.is_final), speechFinal: Boolean(payload.speech_final) });
+    }
+    if (payload.is_final) scheduleStructure(payload.speech_final ? 500 : 1200);
   });
   deepgram.addEventListener("error", () => {
-    if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ type: "error", recoverable: true, message: "Conexão de voz interrompida." }));
+    sendClient({ type: "error", recoverable: true, message: "Conexão de voz interrompida." });
   });
 
-  client.on("message", (audio) => {
+  client.on("message", (audio, isBinary) => {
+    if (!isBinary) {
+      try {
+        const command = JSON.parse(audio.toString());
+        if (command.type === "finalize" && deepgram.readyState === WebSocket.OPEN) {
+          deepgram.send(JSON.stringify({ type: "Finalize" }));
+          scheduleStructure(150);
+        }
+      } catch {}
+      return;
+    }
     if (deepgram.readyState === WebSocket.OPEN) deepgram.send(audio);
   });
   client.on("close", async () => {
+    clearTimeout(structureTimer);
     if (deepgram.readyState === WebSocket.OPEN) deepgram.close(1000, "client-complete");
+    const finalTranscript = transcriptForStructure();
     if (!finalTranscript.trim()) return;
     const jobId = crypto.randomUUID();
     await redis.lPush("clinical-structure-jobs", JSON.stringify({ jobId, category, transcript: finalTranscript })).catch(() => undefined);

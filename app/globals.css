@@ -2,11 +2,11 @@
 
 :root {
   --ink: #152d31;
-  --muted: #65767a;
-  --line: #dfe6e2;
-  --soft-line: #e9eeeb;
+  --muted: #4d6164;
+  --line: #c8d4cf;
+  --soft-line: #d9e2de;
   --paper: #ffffff;
-  --canvas: #f4f6f3;
+  --canvas: #eef2ef;
   --teal: #0d6c68;
   --teal-dark: #0b5553;
   --teal-soft: #e8f4f1;
@@ -133,8 +133,11 @@ button { color: inherit; }
 .record-button, .primary-button { border: 0; border-radius: 10px; background: var(--teal); color: white; font-weight: 680; cursor: pointer; box-shadow: 0 6px 16px rgba(13, 108, 104, .18); }
 .record-button { display: flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 11px; }
 .record-button:hover, .primary-button:hover { background: var(--teal-dark); }
+.record-button:disabled { cursor: not-allowed; opacity: .52; box-shadow: none; }
 .record-button kbd { margin-left: 4px; padding: 3px 6px; border: 1px solid rgba(255, 255, 255, .25); border-bottom-width: 2px; border-radius: 5px; color: #cfe7e4; font-size: 7px; }
 .mic-dot { color: #ff8a7d; font-size: 9px; }
+.consent-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: #42595c; font-size: 11px; font-weight: 620; }
+.consent-line input { width: 15px; height: 15px; margin: 0; accent-color: var(--teal); }
 
 .capture-listening { min-height: 280px; display: flex; flex-direction: column; padding: 23px 25px 20px; background: linear-gradient(180deg, #f8fcfb 0%, #fff 45%); }
 .live-header { display: flex; justify-content: space-between; align-items: center; color: #809092; font-size: 9px; }
@@ -144,7 +147,32 @@ button { color: inherit; }
 .timer { padding-left: 4px; color: #718285; font-family: var(--font-geist-mono), monospace; }
 .live-caption { flex: 1; display: flex; align-items: center; padding: 24px 15px 20px; color: #244046; font-size: 19px; line-height: 1.62; letter-spacing: -.2px; }
 .caption-cursor { display: inline-block; width: 2px; height: 21px; margin-left: 4px; background: var(--teal); animation: blink 1s infinite; }
+.ambient-live-grid { flex: 1; min-height: 365px; display: grid; grid-template-columns: minmax(0, 1.04fr) minmax(0, .96fr); gap: 0; margin-top: 17px; overflow: hidden; border: 1px solid var(--line); border-radius: 13px; background: white; }
+.conversation-panel, .live-structure-panel { min-width: 0; display: flex; flex-direction: column; }
+.conversation-panel { border-right: 1px solid var(--line); }
+.panel-caption { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 13px; border-bottom: 1px solid var(--soft-line); background: #f5f8f6; }
+.panel-caption span { color: #375d5a; font-size: 10px; font-weight: 780; letter-spacing: .75px; }
+.panel-caption small { color: #53676a; font-size: 10px; text-align: right; }
+.speaker-feed { flex: 1; max-height: 330px; overflow-y: auto; padding: 12px 13px; }
+.waiting-copy { margin: 44px auto; color: #5d7072; font-size: 12px; text-align: center; }
+.speaker-line { display: grid; grid-template-columns: 66px 1fr; align-items: start; gap: 9px; margin-bottom: 12px; }
+.speaker-line > span { display: inline-flex; justify-content: center; padding: 4px 6px; border-radius: 6px; font-size: 10px; font-weight: 720; }
+.speaker-line p { margin: 1px 0 0; color: #263f43; font-size: 12px; line-height: 1.48; }
+.speaker-medico > span { background: #dcefeb; color: #075a56; }
+.speaker-paciente > span { background: #e8eaf4; color: #465475; }
+.speaker-line.interim { opacity: .68; }
+.speaker-line .caption-cursor { height: 14px; }
+.live-fields { display: grid; gap: 0; margin: 0; padding: 5px 13px 10px; overflow-y: auto; }
+.live-fields > div { padding: 9px 2px; border-bottom: 1px solid var(--soft-line); }
+.live-fields > div:last-child { border-bottom: 0; }
+.live-fields dt { color: #53676a; font-size: 10px; font-weight: 720; }
+.live-fields dd { margin: 4px 0 0; color: #6a797b; font-size: 11px; line-height: 1.4; }
+.live-fields .filled dd { color: #203d40; }
+.live-fields .filled { position: relative; }
+.live-fields .filled::after { content: "✓"; position: absolute; top: 9px; right: 2px; color: var(--teal); font-size: 10px; font-weight: 800; }
 .listening-footer { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding-top: 16px; border-top: 1px solid var(--soft-line); }
+.audio-status { display: flex; align-items: center; gap: 13px; }
+.audio-status small { max-width: 340px; color: #53686a; font-size: 10px; line-height: 1.35; }
 .audio-bars { height: 26px; display: flex; align-items: center; gap: 3px; }
 .audio-bars i { width: 2px; height: 8px; border-radius: 3px; background: #79b8ad; animation: sound 900ms ease-in-out infinite alternate; }
 .stop-button { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid #edcbc7; border-radius: 9px; background: var(--red-soft); color: #a13e37; font-size: 10px; font-weight: 650; cursor: pointer; }
@@ -338,8 +366,15 @@ kbd { font-family: var(--font-geist-mono), monospace; }
   .capture-idle p { font-size: 10px; }
   .record-button { grid-column: 1 / -1; width: 100%; justify-content: center; }
   .live-caption { padding-inline: 2px; font-size: 16px; }
+  .capture-listening { padding: 18px 13px 15px; }
+  .ambient-live-grid { grid-template-columns: 1fr; max-height: 590px; overflow-y: auto; }
+  .conversation-panel { min-height: 260px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .speaker-feed { max-height: 230px; }
+  .panel-caption { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .panel-caption small { text-align: left; }
   .live-header > span { display: none; }
   .audio-bars { display: none; }
+  .audio-status small { max-width: 210px; }
   .listening-footer { justify-content: flex-end; }
   .review-state { padding: 19px 15px 15px; }
   .review-heading { align-items: flex-start; }
@@ -366,4 +401,39 @@ kbd { font-family: var(--font-geist-mono), monospace; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+/* Legibilidade clínica: textos operacionais nunca dependem de cinza muito claro ou microtipografia. */
+.rail-button, .tag-risk, .fact, .quiet-button, .record-button, .live-header, .live-header strong,
+.stop-button, .text-button, .structured-grid label, .modal-form label, .raw-transcript,
+.review-actions, .primary-button, .templates-row, .templates-row button, .section-heading span,
+.section-heading button, .timeline-meta strong, .timeline-meta span, .timeline-card p,
+.focus-card li strong, .focus-card li small, .quick-actions strong, .quick-actions small,
+.shortcuts-card strong, .shortcuts-card p, .modal-form .check-line, .toast, .login-card label,
+.secure-note, .mobile-nav button, .patient-main p { font-size: max(10px, 0.6875rem); }
+
+.eyebrow, .fact small, .record-button kbd, .confidence, .cid-chip, .vitals span, .vitals small,
+.timeline-tags span, .past-label, .aside-heading span, .quick-actions kbd { font-size: 10px; }
+
+.structured-grid input, .structured-grid textarea, .modal-form input, .modal-form textarea,
+.modal-form select, .login-card input, .login-card select { border-color: #bdcac5; color: #203a3e; font-size: 12px; }
+
+.structured-grid input:disabled, .structured-grid textarea:disabled { color: #31494c; opacity: 1; }
+.eyebrow, .encounter-heading h2 span, .templates-row, .section-heading span,
+.section-heading button, .timeline-meta span, .focus-card li small, .focus-note,
+.aside-heading span, .quick-actions small, .quick-actions kbd, .shortcuts-card p,
+.secure-note, .mobile-nav button { color: #526568; }
+.focus-note { font-size: 10px; }
+.timeline-marker { font-size: 10px; }
+.vitals b { font-size: 12px; }
+.fact small, .live-header, .review-actions, .vitals span, .vitals small, .past-label,
+.raw-transcript, .text-button, .timeline-meta span, .section-heading span,
+.panel-caption small, .audio-status small { color: #40575a; }
+.confidence { color: #17685f; }
+.capture-card, .timeline-section, .focus-card, .quick-actions, .shortcuts-card,
+.timeline-card, .fact, .quiet-button, .more-button { border-color: #b9c8c2; }
+.panel-caption, .vitals span, .shortcuts-card, .focus-note { background-color: #edf3f0; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid rgba(13, 108, 104, .28);
+  outline-offset: 2px;
 }

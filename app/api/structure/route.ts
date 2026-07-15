@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const FALLBACK = {
-  queixa_principal: "Cefaleia leve e pressão arterial elevada desde ontem.",
-  hda: "Nega náusea, vômitos e alterações visuais. Uso regular de losartana 50 mg/dia.",
-  exame_fisico: "Bom estado geral, orientada, hidratada, sem déficit neurológico.",
-  cid10_sugerido: "I10",
-  diagnostico_sugerido: "Hipertensão arterial sistêmica",
-  conduta: "Reforçar medidas não farmacológicas, solicitar função renal e retornar em 30 dias.",
+const EMPTY_RECORD = {
+  queixa_principal: null,
+  hda: null,
+  exame_fisico: null,
+  cid10_sugerido: null,
+  diagnostico_sugerido: null,
+  conduta: null,
 };
 
 const nullableString = { type: ["string", "null"] };
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ data: FALLBACK, mode: "demo" });
+    return NextResponse.json({ data: EMPTY_RECORD, mode: "unavailable" });
   }
 
   const category = body.category ?? "medico";
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       input: [
         {
           role: "system",
-          content: "Você é o copiloto clínico da Lumos Health. Extraia somente informações explicitamente presentes na transcrição, em português do Brasil. Não faça diagnóstico definitivo; o CID é apenas uma sugestão para revisão profissional. Use null quando um dado estiver ausente.",
+          content: "Você é o copiloto clínico da Lumos Health. A entrada é uma conversa parcial ou completa entre Médico e Paciente. Atualize o registro com somente informações explicitamente presentes, em português do Brasil. Não invente dados e não trate perguntas do médico como respostas do paciente. Não faça diagnóstico definitivo; o CID é apenas uma sugestão para revisão profissional. Use null quando um dado estiver ausente.",
         },
         { role: "user", content: body.transcript },
       ],
@@ -84,13 +84,13 @@ export async function POST(request: NextRequest) {
   });
 
   if (!response.ok) {
-    return NextResponse.json({ data: FALLBACK, mode: "fallback" });
+    return NextResponse.json({ data: EMPTY_RECORD, mode: "unavailable" });
   }
 
   const result = (await response.json()) as { output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
   try {
     return NextResponse.json({ data: JSON.parse(outputText(result)), mode: "openai" });
   } catch {
-    return NextResponse.json({ data: FALLBACK, mode: "fallback" });
+    return NextResponse.json({ data: EMPTY_RECORD, mode: "unavailable" });
   }
 }

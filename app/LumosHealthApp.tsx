@@ -1,24 +1,91 @@
 "use client";
 
+import { DeepgramClient } from "@deepgram/sdk";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 
 type CaptureStage = "idle" | "listening" | "structuring" | "review" | "saved";
 type QuickPanel = "prescription" | "exam" | null;
 
-const SAMPLE_TRANSCRIPT =
-  "Dona Maria relata dor de cabeça leve desde ontem, sem náusea ou alteração visual. Pressão hoje cento e quarenta e oito por noventa e dois. Mantém uso regular de losartana cinquenta miligramas pela manhã. Ao exame está em bom estado geral, orientada, hidratada e sem déficit neurológico. Vamos reforçar as medidas de controle, solicitar função renal e retornar em trinta dias.";
+type SpeakerRole = "medico" | "paciente";
+type SpeakerSegment = { id: string; speaker: SpeakerRole; text: string };
+type StructuredRecord = {
+  queixa_principal: string;
+  hda: string;
+  exame_fisico: string;
+  cid10_sugerido: string;
+  diagnostico_sugerido: string;
+  conduta: string;
+};
+type DirectDeepgramConnection = {
+  on: (event: "message" | "error" | "close", callback: (message: unknown) => void) => void;
+  connect: () => unknown;
+  waitForOpen: () => Promise<unknown>;
+  sendMedia: (message: Blob | ArrayBuffer | ArrayBufferView) => void;
+  sendCloseStream: (message: { type: "CloseStream" }) => void;
+  close: () => void;
+};
+type DeepgramWord = { word?: string; punctuated_word?: string; speaker?: number };
+type DirectDeepgramMessage = {
+  type?: string;
+  start?: number;
+  is_final?: boolean;
+  speech_final?: boolean;
+  channel?: { alternatives?: Array<{ transcript?: string; words?: DeepgramWord[] }> };
+};
 
-const TRANSCRIPT_PARTS = [
-  "Dona Maria relata dor de cabeça leve desde ontem,",
-  " sem náusea ou alteração visual.",
-  " Pressão hoje 148 por 92.",
-  " Mantém uso regular de losartana 50 mg pela manhã.",
-  " Ao exame está em bom estado geral, orientada e hidratada,",
-  " sem déficit neurológico.",
-  " Vamos reforçar as medidas de controle, solicitar função renal",
-  " e retornar em 30 dias.",
+const EMPTY_RECORD: StructuredRecord = {
+  queixa_principal: "",
+  hda: "",
+  exame_fisico: "",
+  cid10_sugerido: "",
+  diagnostico_sugerido: "",
+  conduta: "",
+};
+
+const FINAL_RECORD: StructuredRecord = {
+  queixa_principal: "Cefaleia leve desde ontem e pressão arterial elevada.",
+  hda: "Nega náusea, vômitos e alterações visuais. Refere uso regular de losartana 50 mg pela manhã.",
+  exame_fisico: "BEG, orientada, hidratada, sem déficit neurológico. PA 148/92 mmHg.",
+  cid10_sugerido: "I10",
+  diagnostico_sugerido: "Hipertensão arterial sistêmica",
+  conduta: "Reforçar medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias.",
+};
+
+const SAMPLE_SEGMENTS: Array<Omit<SpeakerSegment, "id"> & { structure: Partial<StructuredRecord> }> = [
+  { speaker: "medico", text: "Bom dia, dona Maria. O que está sentindo hoje?", structure: {} },
+  { speaker: "paciente", text: "Desde ontem estou com uma dor de cabeça leve e fiquei preocupada com a pressão.", structure: { queixa_principal: "Cefaleia leve desde ontem e preocupação com pressão arterial." } },
+  { speaker: "medico", text: "Teve enjoo, vômito, visão embaçada ou alguma fraqueza?", structure: {} },
+  { speaker: "paciente", text: "Não, nada disso. Estou tomando a losartana de cinquenta toda manhã, sem esquecer.", structure: { hda: "Nega náusea, vômitos, alteração visual e fraqueza. Uso regular de losartana 50 mg pela manhã." } },
+  { speaker: "medico", text: "Sua pressão hoje está 148 por 92. No exame, está orientada, hidratada e sem déficit neurológico.", structure: { exame_fisico: "BEG, orientada, hidratada, sem déficit neurológico. PA 148/92 mmHg.", cid10_sugerido: "I10", diagnostico_sugerido: "Hipertensão arterial sistêmica" } },
+  { speaker: "medico", text: "Vamos reforçar os cuidados, pedir creatinina e potássio e rever em trinta dias.", structure: { conduta: "Reforçar medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias." } },
 ];
+
+const SAMPLE_TRANSCRIPT = SAMPLE_SEGMENTS.map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`).join("\n");
+
+function segmentsFromDeepgram(message: DirectDeepgramMessage): SpeakerSegment[] {
+  const alternative = message.channel?.alternatives?.[0];
+  const words = alternative?.words ?? [];
+  if (!words.length) {
+    const text = alternative?.transcript?.trim();
+    return text ? [{ id: `${message.start ?? Date.now()}-0`, speaker: "medico", text }] : [];
+  }
+
+  const grouped: Array<{ speaker: SpeakerRole; words: string[] }> = [];
+  for (const word of words) {
+    const speaker: SpeakerRole = Number(word.speaker ?? 0) === 0 ? "medico" : "paciente";
+    const text = word.punctuated_word ?? word.word ?? "";
+    const last = grouped.at(-1);
+    if (!last || last.speaker !== speaker) grouped.push({ speaker, words: [text] });
+    else last.words.push(text);
+  }
+
+  return grouped.map((group, index) => ({
+    id: `${message.start ?? Date.now()}-${index}-${group.speaker}`,
+    speaker: group.speaker,
+    text: group.words.filter(Boolean).join(" ").trim(),
+  })).filter((segment) => segment.text);
+}
 
 const templates = ["Hipertensão", "Diabetes", "IVAS", "Renovar receita"];
 
@@ -66,7 +133,7 @@ function Login({ onEnter }: { onEnter: () => void }) {
         <div className="login-copy">
           <span className="eyebrow-light">PRONTUÁRIO QUE ESCUTA</span>
           <h1>Mais tempo olhando para quem importa.</h1>
-          <p>Registre a consulta com a sua voz. A Lumos organiza, você cuida.</p>
+          <p>Converse naturalmente. A Lumos acompanha, organiza e prepara o registro para sua aprovação.</p>
         </div>
         <div className="login-quote">
           <span className="quote-mark">“</span>
@@ -121,52 +188,269 @@ export default function LumosHealthApp() {
   const [online, setOnline] = useState(true);
   const [toast, setToast] = useState("");
   const [timer, setTimer] = useState(0);
+  const [consentConfirmed, setConsentConfirmed] = useState(true);
+  const [segments, setSegments] = useState<SpeakerSegment[]>([]);
+  const [interimSegment, setInterimSegment] = useState<SpeakerSegment | null>(null);
+  const [structured, setStructured] = useState<StructuredRecord>(EMPTY_RECORD);
+  const [voiceMode, setVoiceMode] = useState<"demo" | "connecting" | "live">("demo");
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const voiceSocket = useRef<WebSocket | null>(null);
+  const directDeepgram = useRef<DirectDeepgramConnection | null>(null);
+  const segmentsRef = useRef<SpeakerSegment[]>([]);
+  const structuredRef = useRef<StructuredRecord>(EMPTY_RECORD);
+  const demoStarted = useRef(false);
   const transcriptTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const liveStructureTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncSegments = useCallback((next: SpeakerSegment[]) => {
+    segmentsRef.current = next;
+    setSegments(next);
+    setTranscript(next.map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`).join("\n"));
+  }, [setTranscript]);
+
+  const mergeStructure = useCallback((update: Partial<StructuredRecord>) => {
+    const next = { ...structuredRef.current };
+    for (const key of Object.keys(EMPTY_RECORD) as Array<keyof StructuredRecord>) {
+      const value = update[key];
+      if (typeof value === "string" && value.trim()) next[key] = value;
+    }
+    structuredRef.current = next;
+    setStructured(next);
+  }, []);
+
+  const scheduleLiveStructure = useCallback((nextSegments: SpeakerSegment[]) => {
+    if (liveStructureTimer.current) clearTimeout(liveStructureTimer.current);
+    const liveTranscript = nextSegments
+      .map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`)
+      .join("\n");
+    if (liveTranscript.length < 45) return;
+    liveStructureTimer.current = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/structure", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript: liveTranscript, category: "medico" }),
+        });
+        const body = await response.json() as { data?: Partial<StructuredRecord>; mode?: string };
+        if (body.data) mergeStructure(body.data);
+      } catch {
+        // A transcrição continua visível; uma nova fala tentará estruturar novamente.
+      }
+    }, 900);
+  }, [mergeStructure]);
+
+  const startDemoFlow = useCallback(() => {
+    if (demoStarted.current) return;
+    demoStarted.current = true;
+    setVoiceMode("demo");
+    let index = 0;
+    transcriptTimer.current = setInterval(() => {
+      const sample = SAMPLE_SEGMENTS[index];
+      if (!sample) {
+        if (transcriptTimer.current) clearInterval(transcriptTimer.current);
+        return;
+      }
+      const next = [...segmentsRef.current, { id: `demo-${index}`, speaker: sample.speaker, text: sample.text }];
+      syncSegments(next);
+      mergeStructure(sample.structure);
+      index += 1;
+    }, 1150);
+  }, [mergeStructure, syncSegments]);
 
   const stopMedia = useCallback(() => {
     if (mediaRecorder.current?.state === "recording") mediaRecorder.current.stop();
     streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (voiceSocket.current?.readyState === WebSocket.OPEN) voiceSocket.current.close(1000, "client-complete");
+    directDeepgram.current?.close();
+    voiceSocket.current = null;
+    directDeepgram.current = null;
     streamRef.current = null;
     mediaRecorder.current = null;
   }, []);
 
   const beginCapture = useCallback(async () => {
+    if (!consentConfirmed) {
+      setToast("Confirme que a paciente foi informada antes de iniciar.");
+      return;
+    }
     setTranscript("");
+    syncSegments([]);
+    structuredRef.current = EMPTY_RECORD;
+    setStructured(EMPTY_RECORD);
+    setInterimSegment(null);
     setTimer(0);
     setStage("listening");
-
-    let index = 0;
-    transcriptTimer.current = setInterval(() => {
-      setTranscript((current) => current + (TRANSCRIPT_PARTS[index] ?? ""));
-      index += 1;
-      if (index >= TRANSCRIPT_PARTS.length && transcriptTimer.current) {
-        clearInterval(transcriptTimer.current);
-      }
-    }, 760);
+    demoStarted.current = false;
     clockTimer.current = setInterval(() => setTimer((current) => current + 1), 1000);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorder.current = recorder;
-      recorder.start(500);
-    } catch {
-      setToast("Microfone indisponível — o modo de demonstração continua ativo.");
-    }
-  }, []);
+      const socketUrl = process.env.NEXT_PUBLIC_VOICE_WS_URL;
 
-  const finishCapture = useCallback(() => {
+      if (!socketUrl) {
+        setVoiceMode("connecting");
+        const tokenResponse = await fetch("/api/deepgram/token", { method: "POST" });
+        if (!tokenResponse.ok) throw new Error("deepgram-token-unavailable");
+        const tokenBody = await tokenResponse.json() as { accessToken?: string };
+        if (!tokenBody.accessToken) throw new Error("deepgram-token-missing");
+
+        const deepgram = new DeepgramClient({ accessToken: tokenBody.accessToken });
+        const connection = await deepgram.listen.v1.connect({
+          model: "nova-3",
+          language: "pt-BR",
+          smart_format: "true",
+          punctuate: "true",
+          interim_results: "true",
+          endpointing: "450",
+          vad_events: "true",
+          diarize_model: "latest",
+        }) as unknown as DirectDeepgramConnection;
+        directDeepgram.current = connection;
+        connection.on("message", (rawMessage) => {
+          const message = rawMessage as DirectDeepgramMessage;
+          if (message.type !== "Results") return;
+          const nextSegments = segmentsFromDeepgram(message);
+          if (!nextSegments.length) return;
+          if (message.is_final) {
+            const next = [...segmentsRef.current, ...nextSegments];
+            syncSegments(next);
+            setInterimSegment(null);
+            scheduleLiveStructure(next);
+          } else {
+            setInterimSegment(nextSegments.at(-1) ?? null);
+          }
+        });
+        connection.on("error", () => {
+          setToast("A conexão de voz foi interrompida; a transcrição já recebida foi preservada.");
+          if (!segmentsRef.current.length) startDemoFlow();
+        });
+        connection.connect();
+        await connection.waitForOpen();
+        setVoiceMode("live");
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data.size) connection.sendMedia(event.data);
+        });
+        recorder.start(320);
+        return;
+      }
+
+      setVoiceMode("connecting");
+      const socket = new WebSocket(`${socketUrl.replace(/\/$/, "")}?category=medico`);
+      voiceSocket.current = socket;
+      socket.addEventListener("open", () => {
+        setVoiceMode("live");
+        recorder.start(320);
+      });
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size && socket.readyState === WebSocket.OPEN) socket.send(event.data);
+      });
+      socket.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as {
+            type?: string;
+            text?: string;
+            final?: boolean;
+            speaker?: SpeakerRole;
+            id?: string;
+            data?: Partial<StructuredRecord>;
+            message?: string;
+          };
+          if (message.type === "transcript" && message.text) {
+            const segment = {
+              id: message.id ?? `voice-${Date.now()}`,
+              speaker: message.speaker ?? "medico",
+              text: message.text,
+            };
+            if (message.final) {
+              syncSegments([...segmentsRef.current, segment]);
+              setInterimSegment(null);
+            } else {
+              setInterimSegment(segment);
+            }
+          }
+          if (message.type === "structure" && message.data) mergeStructure(message.data);
+          if (message.type === "error") setToast(message.message ?? "A escuta ao vivo foi interrompida.");
+        } catch {
+          setToast("Recebemos uma resposta de voz inválida; o áudio continua localmente.");
+        }
+      });
+      socket.addEventListener("error", () => {
+        if (recorder.state === "inactive") recorder.start(400);
+        setToast("Servidor de voz indisponível — ativamos a demonstração local.");
+        if (!segmentsRef.current.length) startDemoFlow();
+      });
+    } catch {
+      if (streamRef.current) {
+        if (mediaRecorder.current?.state === "inactive") mediaRecorder.current.start(400);
+        setToast("Deepgram indisponível — ativamos a demonstração local sem expor sua chave.");
+      } else {
+        setToast("Microfone indisponível — o modo de demonstração continua ativo.");
+      }
+      startDemoFlow();
+    }
+  }, [consentConfirmed, mergeStructure, scheduleLiveStructure, setStage, setTranscript, startDemoFlow, syncSegments]);
+
+  const finishCapture = useCallback(async () => {
     if (transcriptTimer.current) clearInterval(transcriptTimer.current);
     if (clockTimer.current) clearInterval(clockTimer.current);
-    stopMedia();
-    setTranscript((current) => current || SAMPLE_TRANSCRIPT);
+    if (liveStructureTimer.current) clearTimeout(liveStructureTimer.current);
+    if (mediaRecorder.current?.state === "recording") {
+      mediaRecorder.current.requestData();
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      mediaRecorder.current.stop();
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (voiceSocket.current?.readyState === WebSocket.OPEN) {
+      voiceSocket.current.send(JSON.stringify({ type: "finalize" }));
+    }
+    if (directDeepgram.current) {
+      directDeepgram.current.sendCloseStream({ type: "CloseStream" });
+    }
     setStage("structuring");
-    window.setTimeout(() => setStage("review"), 1250);
-  }, [stopMedia]);
+    if (voiceMode === "live") {
+      await new Promise((resolve) => window.setTimeout(resolve, 420));
+    }
+    const rawTranscript = segmentsRef.current.length
+      ? segmentsRef.current.map((segment) => `${segment.speaker === "medico" ? "Médico" : "Paciente"}: ${segment.text}`).join("\n")
+      : SAMPLE_TRANSCRIPT;
+    if (!segmentsRef.current.length) {
+      syncSegments(SAMPLE_SEGMENTS.map((segment, index) => ({ id: `fallback-${index}`, speaker: segment.speaker, text: segment.text })));
+    }
+
+    if (!Object.values(structuredRef.current).some(Boolean) || voiceMode === "live") {
+      try {
+        const response = await fetch("/api/structure", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript: rawTranscript, category: "medico" }),
+        });
+        const body = await response.json() as { data?: Partial<StructuredRecord>; mode?: string };
+        if (body.data) mergeStructure(body.data);
+        if (body.mode === "unavailable" && voiceMode === "live") {
+          setToast("Transcrição concluída. A OpenAI está sem quota; preencha ou revise os campos manualmente.");
+        }
+      } catch {
+        if (voiceMode === "demo") mergeStructure(FINAL_RECORD);
+        else setToast("A estruturação da IA está indisponível. Revise a transcrição e preencha os campos manualmente.");
+      }
+    } else {
+      mergeStructure(FINAL_RECORD);
+    }
+
+    window.setTimeout(() => {
+      if (voiceSocket.current?.readyState === WebSocket.OPEN) voiceSocket.current.close(1000, "review-ready");
+      directDeepgram.current?.close();
+      voiceSocket.current = null;
+      directDeepgram.current = null;
+      setStage("review");
+    }, 650);
+  }, [mergeStructure, setStage, syncSegments, voiceMode]);
 
   useEffect(() => {
     const updateConnection = () => setOnline(navigator.onLine);
@@ -183,6 +467,7 @@ export default function LumosHealthApp() {
       window.removeEventListener("offline", updateConnection);
       if (transcriptTimer.current) clearInterval(transcriptTimer.current);
       if (clockTimer.current) clearInterval(clockTimer.current);
+      if (liveStructureTimer.current) clearTimeout(liveStructureTimer.current);
       stopMedia();
     };
   }, [stopMedia]);
@@ -222,6 +507,12 @@ export default function LumosHealthApp() {
       return;
     }
     setToast(`Template de ${template} preparado.`);
+  }
+
+  function updateStructured(field: keyof StructuredRecord, value: string) {
+    const next = { ...structuredRef.current, [field]: value };
+    structuredRef.current = next;
+    setStructured(next);
   }
 
   async function confirmRecord() {
@@ -310,24 +601,48 @@ export default function LumosHealthApp() {
                 <div className="capture-idle">
                   <div className="wave-orb" aria-hidden="true"><span /><span /><span /><span /><span /></div>
                   <div>
-                    <span className="eyebrow teal">REGISTRO POR VOZ</span>
-                    <h3>Converse. A Lumos organiza.</h3>
-                    <p>Fale naturalmente durante o atendimento. Você revisa tudo antes de salvar.</p>
+                    <span className="eyebrow teal">ESCUTA AMBIENTE ASSISTIDA</span>
+                    <h3>Atenda normalmente. A Lumos acompanha.</h3>
+                    <p>Sem ditado: médico e paciente conversam, e o registro aparece estruturado em tempo real para revisão.</p>
+                    <label className="consent-line"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)} /> Paciente informada e de acordo com a escuta</label>
                   </div>
-                  <button className="record-button" onClick={beginCapture}><span className="mic-dot">●</span> Iniciar escuta <kbd>Ctrl Space</kbd></button>
+                  <button className="record-button" onClick={beginCapture} disabled={!consentConfirmed}><span className="mic-dot">●</span> Iniciar escuta ambiente <kbd>Ctrl Space</kbd></button>
                 </div>
               )}
 
               {stage === "listening" && (
                 <div className="capture-listening">
                   <div className="live-header">
-                    <div><span className="live-dot" /> <strong>Escutando</strong><span className="timer">{String(Math.floor(timer / 60)).padStart(2, "0")}:{String(timer % 60).padStart(2, "0")}</span></div>
-                    <span>Deepgram Nova-3 • pt-BR</span>
+                    <div><span className="live-dot" /> <strong>Escutando consulta</strong><span className="timer">{String(Math.floor(timer / 60)).padStart(2, "0")}:{String(timer % 60).padStart(2, "0")}</span></div>
+                    <span>{voiceMode === "live" ? "Deepgram ao vivo" : voiceMode === "connecting" ? "Conectando áudio…" : "Demonstração segura"} • pt-BR</span>
                   </div>
-                  <div className="live-caption">{transcript}<span className="caption-cursor" /></div>
+                  <div className="ambient-live-grid">
+                    <section className="conversation-panel" aria-label="Conversa transcrita ao vivo">
+                      <div className="panel-caption"><span>CONVERSA AO VIVO</span><small>O médico foi identificado como o primeiro interlocutor</small></div>
+                      <div className="speaker-feed">
+                        {segments.length === 0 && !interimSegment && <p className="waiting-copy">Aguardando a primeira fala…</p>}
+                        {[...segments, ...(interimSegment ? [interimSegment] : [])].map((segment, index) => (
+                          <article className={`speaker-line speaker-${segment.speaker} ${interimSegment?.id === segment.id ? "interim" : ""}`} key={`${segment.id}-${index}`}>
+                            <span>{segment.speaker === "medico" ? "Médico" : "Paciente"}</span>
+                            <p>{segment.text}{interimSegment?.id === segment.id && <i className="caption-cursor" />}</p>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                    <section className="live-structure-panel" aria-label="Registro clínico sendo estruturado">
+                      <div className="panel-caption"><span>REGISTRO SENDO ESTRUTURADO</span><small>✦ Sugestões — revisão obrigatória</small></div>
+                      <dl className="live-fields">
+                        <div className={structured.queixa_principal ? "filled" : ""}><dt>Queixa principal</dt><dd>{structured.queixa_principal || "Aguardando contexto clínico…"}</dd></div>
+                        <div className={structured.hda ? "filled" : ""}><dt>História atual</dt><dd>{structured.hda || "Aguardando informações…"}</dd></div>
+                        <div className={structured.exame_fisico ? "filled" : ""}><dt>Exame físico</dt><dd>{structured.exame_fisico || "Ainda não mencionado"}</dd></div>
+                        <div className={structured.diagnostico_sugerido ? "filled" : ""}><dt>Hipótese / CID sugerido</dt><dd>{structured.diagnostico_sugerido ? `${structured.diagnostico_sugerido}${structured.cid10_sugerido ? ` • ${structured.cid10_sugerido}` : ""}` : "Sem sugestão ainda"}</dd></div>
+                        <div className={structured.conduta ? "filled" : ""}><dt>Conduta</dt><dd>{structured.conduta || "Aguardando definição do plano…"}</dd></div>
+                      </dl>
+                    </section>
+                  </div>
                   <div className="listening-footer">
-                    <div className="audio-bars" aria-hidden="true">{Array.from({ length: 24 }).map((_, index) => <i key={index} style={{ animationDelay: `${index * 48}ms` }} />)}</div>
-                    <button className="stop-button" onClick={finishCapture}><span>■</span> Finalizar registro</button>
+                    <div className="audio-status"><div className="audio-bars" aria-hidden="true">{Array.from({ length: 24 }).map((_, index) => <i key={index} style={{ animationDelay: `${index * 48}ms` }} />)}</div><small>Áudio não é armazenado; somente o texto aprovado compõe o prontuário.</small></div>
+                    <button className="stop-button" onClick={finishCapture}><span>■</span> Encerrar escuta e revisar</button>
                   </div>
                 </div>
               )}
@@ -335,7 +650,7 @@ export default function LumosHealthApp() {
               {stage === "structuring" && (
                 <div className="structuring-state">
                   <span className="ai-spinner"><i /><i /><i /></span>
-                  <div><span className="eyebrow teal">ORGANIZANDO REGISTRO</span><h3>Separando os dados clínicos…</h3><p>A fala original fica preservada para auditoria.</p></div>
+                  <div><span className="eyebrow teal">ORGANIZANDO REGISTRO</span><h3>Consolidando os dados clínicos…</h3><p>A transcrição por interlocutor fica disponível para conferência.</p></div>
                 </div>
               )}
 
@@ -346,11 +661,11 @@ export default function LumosHealthApp() {
                     <button className="text-button" onClick={() => setStage("idle")}>Descartar e recomeçar</button>
                   </div>
                   <div className="structured-grid">
-                    <label className="field-span-2">Queixa principal <span className="confidence">Alta confiança</span><input defaultValue="Cefaleia leve e aferição de pressão elevada desde ontem." disabled={stage === "saved"} /></label>
-                    <label className="field-span-2">História da doença atual<textarea defaultValue="Nega náusea, vômitos e alterações visuais. Refere uso regular de losartana 50 mg pela manhã." disabled={stage === "saved"} /></label>
-                    <label>Exame físico<input defaultValue="BEG, orientada, hidratada, sem déficit neurológico." disabled={stage === "saved"} /></label>
-                    <label>Hipótese / CID sugerido <span className="cid-chip">I10</span><input defaultValue="Hipertensão arterial sistêmica" disabled={stage === "saved"} /></label>
-                    <label className="field-span-2">Conduta<textarea defaultValue="Reforçadas medidas não farmacológicas. Solicitar creatinina e potássio. Retorno em 30 dias." disabled={stage === "saved"} /></label>
+                    <label className="field-span-2">Queixa principal <span className="confidence">Sugestão da IA</span><input value={structured.queixa_principal} onChange={(event) => updateStructured("queixa_principal", event.target.value)} disabled={stage === "saved"} /></label>
+                    <label className="field-span-2">História da doença atual<textarea value={structured.hda} onChange={(event) => updateStructured("hda", event.target.value)} disabled={stage === "saved"} /></label>
+                    <label>Exame físico<input value={structured.exame_fisico} onChange={(event) => updateStructured("exame_fisico", event.target.value)} disabled={stage === "saved"} /></label>
+                    <label>Hipótese / CID sugerido {structured.cid10_sugerido && <span className="cid-chip">{structured.cid10_sugerido}</span>}<input value={structured.diagnostico_sugerido} onChange={(event) => updateStructured("diagnostico_sugerido", event.target.value)} disabled={stage === "saved"} /></label>
+                    <label className="field-span-2">Conduta<textarea value={structured.conduta} onChange={(event) => updateStructured("conduta", event.target.value)} disabled={stage === "saved"} /></label>
                   </div>
                   <details className="raw-transcript"><summary>Ver transcrição original</summary><p>{transcript || SAMPLE_TRANSCRIPT}</p></details>
                   <div className="review-actions">
