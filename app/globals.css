@@ -494,3 +494,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   outline: 3px solid rgba(13, 108, 104, .28);
   outline-offset: 2px;
 }
+
+/* Always-visible safety boundary for the experimental demo. */
+.lumos-demo-banner {
+  background: #fff3cd;
+  color: #5c3b08;
+  border-bottom: 1px solid #edd088;
+  padding: 9px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: .02em;
+}

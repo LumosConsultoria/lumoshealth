@@ -1,3 +1,4 @@
+import { demoApiDeniedResponse, isLocalDemoRequest, MAX_DEMO_TRANSCRIPT } from "../../../lib/demo-security.mjs";
 import { NextRequest, NextResponse } from "next/server";
 
 const EMPTY_RECORD = {
@@ -84,9 +85,19 @@ function outputText(result: { output?: Array<{ content?: Array<{ type?: string; 
 }
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json()) as { transcript?: string; category?: string };
-  if (!body.transcript?.trim()) {
-    return NextResponse.json({ error: "A transcrição é obrigatória." }, { status: 400 });
+  if (!isLocalDemoRequest(request)) return demoApiDeniedResponse();
+  let body: { transcript?: string; category?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+  }
+  if (typeof body?.transcript !== "string" || !body.transcript.trim()
+      || body.transcript.length > MAX_DEMO_TRANSCRIPT) {
+    return NextResponse.json({ error: "Transcrição inválida ou longa demais." }, { status: 400 });
+  }
+  if (body.category && !Object.hasOwn(schemas, body.category)) {
+    return NextResponse.json({ error: "Categoria profissional inválida." }, { status: 400 });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
