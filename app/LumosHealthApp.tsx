@@ -499,7 +499,7 @@ export default function LumosHealthApp() {
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [beginCapture, finishCapture, stage]);
+  }, [beginCapture, finishCapture, setQuickPanel, stage]);
 
   useEffect(() => {
     if (!toast) return;
@@ -507,7 +507,7 @@ export default function LumosHealthApp() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  function useTemplate(template: string) {
+  function applyTemplate(template: string) {
     setSelectedTemplate(template);
     if (template === "Renovar receita") {
       setQuickPanel("prescription");
@@ -745,7 +745,7 @@ export default function LumosHealthApp() {
 
             <div className="templates-row">
               <span>Começar com um modelo:</span>
-              {templates.map((template) => <button key={template} className={selectedTemplate === template ? "selected" : ""} onClick={() => useTemplate(template)}>{template}</button>)}
+              {templates.map((template) => <button key={template} className={selectedTemplate === template ? "selected" : ""} onClick={() => applyTemplate(template)}>{template}</button>)}
               <button className="template-more">Mais modelos +</button>
             </div>
 
