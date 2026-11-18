@@ -160,28 +160,12 @@ function Login({ onEnter }: { onEnter: () => void }) {
         <form className="login-card" onSubmit={submit}>
           <span className="mobile-brand">Lumos <strong>Health</strong></span>
           <div>
-            <span className="eyebrow">ACESSO PROFISSIONAL</span>
-            <h2>Bom atendimento começa aqui.</h2>
-            <p>Entre com os dados da sua unidade.</p>
+            <span className="eyebrow">PROTÓTIPO DE DEMONSTRAÇÃO</span>
+            <h2>Conheça o fluxo de atendimento.</h2>
+            <p>Os pacientes e profissionais exibidos são fictícios. Este acesso não realiza autenticação clínica.</p>
           </div>
-          <label>
-            CPF
-            <input name="cpf" inputMode="numeric" defaultValue="123.456.789-00" aria-label="CPF" />
-          </label>
-          <label>
-            Senha
-            <input name="password" type="password" defaultValue="lumos2026" aria-label="Senha" />
-          </label>
-          <label>
-            Categoria profissional
-            <select name="category" defaultValue="medico" aria-label="Categoria profissional">
-              <option value="medico">Médico(a)</option>
-              <option value="enfermeiro">Enfermeiro(a)</option>
-              <option value="tecnico">Técnico(a) de enfermagem</option>
-            </select>
-          </label>
-          <button className="primary-button login-button" type="submit">Entrar no atendimento <span>→</span></button>
-          <div className="secure-note"><span>✓</span> Ambiente seguro e auditado • LGPD</div>
+          <button className="primary-button login-button" type="submit">Abrir demonstração <span>→</span></button>
+          <div className="secure-note"><span>✓</span> Demonstração com dados fictícios — não utilizar informações reais</div>
         </form>
       </section>
     </main>
@@ -251,7 +235,7 @@ export default function LumosHealthApp() {
       try {
         const response = await fetch("/api/structure", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-lumos-local-demo": "local-only" },
           body: JSON.stringify({ transcript: liveTranscript, category: "medico" }),
         });
         const body = await response.json() as { data?: Partial<StructuredRecord>; mode?: string };
@@ -318,7 +302,7 @@ export default function LumosHealthApp() {
 
       if (!socketUrl) {
         setVoiceMode("connecting");
-        const tokenResponse = await fetch("/api/deepgram/token", { method: "POST" });
+        const tokenResponse = await fetch("/api/deepgram/token", { method: "POST", headers: { "x-lumos-local-demo": "local-only" } });
         if (!tokenResponse.ok) throw new Error("deepgram-token-unavailable");
         const tokenBody = await tokenResponse.json() as { accessToken?: string };
         if (!tokenBody.accessToken) throw new Error("deepgram-token-missing");
@@ -450,7 +434,7 @@ export default function LumosHealthApp() {
       try {
         const response = await fetch("/api/structure", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-lumos-local-demo": "local-only" },
           body: JSON.stringify({ transcript: rawTranscript, category: "medico" }),
         });
         const body = await response.json() as { data?: Partial<StructuredRecord>; mode?: string };
@@ -562,31 +546,38 @@ export default function LumosHealthApp() {
       setToast(`Revise ${pendingApprovalCount} ${pendingApprovalCount === 1 ? "sugestão pendente" : "sugestões pendentes"} antes de confirmar.`);
       return;
     }
+
+    // Demo preview, not a clinically signed record. Never persist transcripts
+    // or generated clinical data in browser localStorage.
     setStage("saved");
-    const finalizedRecord = {
-      ...structured,
-      exames_sugeridos: approvedExams,
-      medicamentos_sugeridos: approvedMedications,
-    };
-    const draft = { transcript: transcript || SAMPLE_TRANSCRIPT, category: "consulta_medica", structuredData: finalizedRecord };
     if (!online) {
-      localStorage.setItem("lumos.pending-record", JSON.stringify(draft));
-      setToast("Registro salvo neste dispositivo. Sincronizaremos depois.");
+      setToast("Prévia concluída offline. Nenhuma informação clínica foi armazenada.");
       return;
     }
+
+    const draft = {
+      transcript: transcript || SAMPLE_TRANSCRIPT,
+      category: "consulta_medica",
+      structuredData: {
+        ...structured,
+        exames_sugeridos: approvedExams,
+        medicamentos_sugeridos: approvedMedications,
+      },
+    };
 
     try {
       const response = await fetch("/api/records", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-lumos-local-demo": "local-only" },
         body: JSON.stringify(draft),
       });
-      if (!response.ok) throw new Error("sync failed");
-      localStorage.removeItem("lumos.pending-record");
-      setToast("Registro confirmado e sincronizado.");
+      if (!response.ok) {
+        setToast("Prévia concluída. API local desativada; nenhum registro foi enviado.");
+        return;
+      }
+      setToast("Rascunho fictício salvo na demonstração local. Não assinado.");
     } catch {
-      localStorage.setItem("lumos.pending-record", JSON.stringify(draft));
-      setToast("Registro confirmado. A sincronização continuará em segundo plano.");
+      setToast("Prévia concluída. Nenhum registro clínico foi enviado.");
     }
   }
 
@@ -594,6 +585,7 @@ export default function LumosHealthApp() {
 
   return (
     <main className="app-shell">
+      <div className="lumos-demo-banner" role="status">DEMONSTRAÇÃO EXPERIMENTAL — DADOS FICTÍCIOS • Sem autenticação clínica nem assinatura válida</div>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><i /><i /><i /></span>
@@ -745,7 +737,7 @@ export default function LumosHealthApp() {
                   </section>
                   <details className="raw-transcript"><summary>Ver transcrição original</summary><p>{transcript || SAMPLE_TRANSCRIPT}</p></details>
                   <div className="review-actions">
-                    {stage === "review" ? <><span>{pendingApprovalCount ? "Decida sobre cada exame e receita antes de assinar." : "Tudo revisado. Somente itens aprovados serão incluídos."}</span><button className="primary-button" onClick={confirmRecord} disabled={pendingApprovalCount > 0}>{pendingApprovalCount ? `Resolver ${pendingApprovalCount} pendências` : "Confirmar registro"} <span>✓</span></button></> : <><span className="saved-note"><b>✓</b> Assinado por Dra. Ana Lima às 09:51</span><button className="quiet-button" onClick={() => setStage("idle")}>Novo registro</button></>}
+                    {stage === "review" ? <><span>{pendingApprovalCount ? "Decida sobre cada exame e receita antes de assinar." : "Tudo revisado. Somente itens aprovados serão incluídos."}</span><button className="primary-button" onClick={confirmRecord} disabled={pendingApprovalCount > 0}>{pendingApprovalCount ? `Resolver ${pendingApprovalCount} pendências` : "Confirmar registro"} <span>✓</span></button></> : <><span className="saved-note"><b>✓</b> Prévia revisada — sem assinatura clínica</span><button className="quiet-button" onClick={() => setStage("idle")}>Novo registro</button></>}
                   </div>
                 </div>
               )}
@@ -824,7 +816,7 @@ export default function LumosHealthApp() {
                 <label className="check-line"><input type="checkbox" /> Marcar como urgente</label>
               </div>
             )}
-            <div className="modal-actions"><button className="quiet-button" onClick={() => setQuickPanel(null)}>Cancelar</button><button className="primary-button" onClick={() => { setQuickPanel(null); setToast(quickPanel === "prescription" ? "Receita adicionada ao atendimento." : "Pedido de exame adicionado ao atendimento."); }}>Adicionar ao atendimento <span>→</span></button></div>
+            <div className="modal-actions"><button className="quiet-button" onClick={() => setQuickPanel(null)}>Cancelar</button><button className="primary-button" onClick={() => { setQuickPanel(null); setToast(quickPanel === "prescription" ? "Receita simulada na demonstração." : "Pedido de exame simulado na demonstração."); }}>Adicionar ao atendimento <span>→</span></button></div>
           </section>
         </div>
       )}
@@ -833,7 +825,7 @@ export default function LumosHealthApp() {
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setTimelineDetail(null)}>
           <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-modal-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-heading"><div><span className="eyebrow teal">DETALHES DO ATENDIMENTO</span><h2 id="record-modal-title">{timelineDetail === "current" ? "Consulta médica" : timelineDetail === "triage" ? "Triagem de enfermagem" : "Acompanhamento de hipertensão"}</h2></div><button onClick={() => setTimelineDetail(null)} aria-label="Fechar">×</button></div>
-            <div className="record-summary-bar"><span>{timelineDetail === "current" ? "Hoje, 09:51 • Dra. Ana Lima" : timelineDetail === "triage" ? "Hoje, 09:28 • Enf. João Mendes" : "12/05/2026 • Dr. Rafael Costa"}</span><b>✓ Registro assinado</b></div>
+            <div className="record-summary-bar"><span>{timelineDetail === "current" ? "Hoje, 09:51 • Dra. Ana Lima" : timelineDetail === "triage" ? "Hoje, 09:28 • Enf. João Mendes" : "12/05/2026 • Dr. Rafael Costa"}</span><b>Registro fictício de demonstração</b></div>
             <div className="record-detail-body">
               <section className="record-detail-section"><h3>Registro clínico</h3>{timelineDetail === "current" ? <><p><strong>Queixa principal</strong>{structured.queixa_principal || "Não informada"}</p><p><strong>História atual</strong>{structured.hda || "Não informada"}</p><p><strong>Exame físico</strong>{structured.exame_fisico || "Não informado"}</p><p><strong>Hipótese</strong>{structured.diagnostico_sugerido || "Não informada"}{structured.cid10_sugerido ? ` • CID ${structured.cid10_sugerido}` : ""}</p><p><strong>Conduta aprovada</strong>{structured.conduta || "Não informada"}</p></> : timelineDetail === "triage" ? <><p><strong>Motivo da procura</strong>Cefaleia leve desde ontem. Nega outros sintomas.</p><div className="detail-vitals"><span>PA <b>148/92</b></span><span>FC <b>78 bpm</b></span><span>SpO₂ <b>98%</b></span><span>Glicemia <b>126 mg/dL</b></span></div><p><strong>Classificação</strong>Não urgente</p></> : <><p><strong>Evolução</strong>PA controlada. Sem queixas ou sinais de alarme.</p><p><strong>Conduta</strong>Mantidas orientações de dieta, atividade física e tratamento anti-hipertensivo.</p></>}</section>
               <section className="record-detail-section"><h3>Exames solicitados</h3>{timelineDetail === "current" ? (approvedExams.length ? <ul>{approvedExams.map((exam, index) => <li key={`detail-exam-${index}`}><b>{exam.nome}</b><span>{exam.justificativa}</span></li>)}</ul> : <p className="empty-detail">Nenhum exame aprovado neste atendimento.</p>) : <p className="empty-detail">Nenhum exame solicitado neste registro.</p>}</section>
