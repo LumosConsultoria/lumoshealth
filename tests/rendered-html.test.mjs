@@ -39,7 +39,7 @@ test("exposes PWA and OpenAI structured-output integration", async () => {
 
   assert.match(layout, /manifest:\s*"\/manifest\.webmanifest"/);
   assert.equal(JSON.parse(manifest).lang, "pt-BR");
-  assert.match(serviceWorker, /lumos-health-shell-v1/);
+  assert.match(serviceWorker, /lumos-health-shell-v2/);
   assert.match(structureRoute, /api\.openai\.com\/v1\/responses/);
   assert.match(structureRoute, /type:\s*"json_schema"/);
   assert.match(structureRoute, /exames_sugeridos/);
