@@ -1,6 +1,8 @@
+import { demoApiDeniedResponse, isLocalDemoRequest } from "../../../../lib/demo-security.mjs";
 import { NextResponse } from "next/server";
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!isLocalDemoRequest(request)) return demoApiDeniedResponse();
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: "Deepgram não configurada." }, { status: 503 });
