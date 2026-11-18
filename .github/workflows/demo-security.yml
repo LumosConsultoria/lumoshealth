@@ -1,0 +1,34 @@
+name: Demo security checks
+
+on:
+  push:
+    branches:
+      - main
+      - security/**
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Test demo safety guard and contracts
+        run: node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs
+      - name: Check backend JavaScript syntax
+        run: node --check server/src/index.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Build and run existing application tests
+        run: npm test

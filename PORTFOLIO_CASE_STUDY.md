@@ -24,3 +24,9 @@ The source demonstrates an integration design and prototype implementation. It *
 - Perform formal clinical and regulatory review before any real-world use
 
 No part of this case study claims that these measures have been completed.
+
+## Security hardening (November 2026)
+
+A review branch introduces fail-closed public clinical routes, a locally gated synthetic demo, unsigned-only record drafts, disabled unprotected voice proxy, JWT checks for the opt-in backend, loopback Docker bindings, and explicit warnings in the UI.
+
+These changes **reduce risk**; they are **not** evidence of production security or clinical approval. The authenticated human-signature flow, real-data privacy safeguards, and end-to-end clinical tests remain out of scope. Never enter actual patient data into this demo.

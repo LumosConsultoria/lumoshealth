@@ -1,5 +1,7 @@
 # Lumos Health
 
+> **STATUS — 18/11/2026: DEMONSTRAÇÃO, NÃO SISTEMA CLÍNICO.** A interface exibe dados fictícios; o login visual não autentica profissionais. As rotas Next.js de IA, transcrição e registros estão bloqueadas por padrão e sempre bloqueadas em produção. Não há assinatura, prescrição ou pedido de exame clinicamente válido. Não insira dados reais de pacientes.
+
 MVP de Prontuário Eletrônico do Paciente para atenção primária. A experiência foi desenhada para consultas curtas e de alto volume: histórico persistente no topo, timeline única e escuta ambiente com revisão clínica obrigatória.
 
 ## O que já está no MVP
@@ -8,13 +10,13 @@ MVP de Prontuário Eletrônico do Paciente para atenção primária. A experiên
 - Escuta natural da conversa entre profissional e paciente, sem exigir ditado.
 - Transcrição ao vivo por interlocutor com Deepgram Nova-3 (`pt-BR`) e diarização.
 - Estruturação clínica incremental pela OpenAI Responses API, com Structured Outputs e schemas por categoria profissional.
-- Campos sugeridos visíveis durante a consulta e aprovação profissional antes de qualquer registro.
+- Campos sugeridos e aprovação **visual simulada**; ainda não há comprovação de aprovação clínica autenticada no servidor.
 - Conduta sugerida pela IA, com exames e receitas em filas separadas de aprovação; somente itens aprovados entram no atendimento final.
 - Timeline clicável com detalhes do registro clínico, exames solicitados e receitas emitidas.
-- Receita, exames e atalhos de teclado em poucos passos.
-- PWA offline-first com fila local temporária para registros pendentes.
-- Modelo multi-tenant para D1 (demo publicada) e PostgreSQL com RLS (produção).
-- Autenticação CPF + senha, permissões por categoria e trilha de auditoria no backend.
+- Fluxos visuais simulados de receita e exames (sem emissão de documentos clínicos válidos) e atalhos de teclado.
+- PWA demonstrativa. O fluxo visual não armazena transcrições no localStorage do navegador; sincronização offline clínica não está habilitada.
+- Protótipo de modelos multi-tenant e políticas RLS em PostgreSQL; isolamento entre organizações ainda sem validação de segurança para produção.
+- Implementação experimental de autenticação JWT no backend, desativada por padrão; a tela demonstração não implementa autenticação clínica.
 - Docker Compose com PostgreSQL, Redis e API.
 
 ## Desenvolvimento web
@@ -59,3 +61,26 @@ Em produção, cadastre `OPENAI_API_KEY` e `DEEPGRAM_API_KEY` como segredos do p
 - `Alt + E`: solicitar exame.
 
 > Os dados exibidos na demonstração são inteiramente fictícios.
+
+## Limites de segurança para a demonstração
+
+- Por padrão, `/api/records`, `/api/structure` e `/api/deepgram/token` retornam HTTP 403, inclusive em implantações públicas.
+- Para uma **demonstração LOCAL com dados inteiramente fictícios**, use `NODE_ENV=development` e defina `LUMOS_ENABLE_LOCAL_DEMO_API=true` em `.env.local`. O serviço deve permanecer acessível apenas no próprio computador. Esta chave **não é autenticação** e não autoriza dados reais.
+- Mesmo nessa demonstração, `/api/records` persiste somente **rascunho não assinado**, sem transformar sugestões de IA em prescrições ou solicitações de exames.
+- O backend Express exige `LUMOS_ENABLE_BACKEND_API=true` **e** `JWT_SECRET` forte para liberar login e `/clinical/structure`; esta API também não está certificada para produção.
+- O proxy WebSocket `/voice/stream` foi bloqueado até existir autenticação/controle de origem testados. Use a transcrição direta temporária apenas no ambiente local explicitamente habilitado.
+- O Docker Compose publica PostgreSQL, Redis e API somente em `127.0.0.1`.
+- Nenhuma trilha de aprovação clínica, LGPD, RLS ou política de retenção deve ser considerada validada por estes bloqueios. É necessária análise independente antes de qualquer uso real.
+
+## Verificações automatizadas
+
+```bash
+node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs
+node --check server/src/index.mjs
+npm ci
+npx tsc --noEmit
+npm run lint
+npm test
+```
+
+As verificações não substituem testes integrados de autenticação, isolamento entre tenants, autorização, segurança de dados e revisão clínica.
