@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
-import { SignJWT } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 import pg from "pg";
 import { createClient } from "redis";
 import { WebSocket, WebSocketServer } from "ws";
@@ -21,8 +21,41 @@ redis.connect().catch(() => undefined);
 app.use(cors({ origin: process.env.WEB_ORIGIN ?? "http://localhost:3000" }));
 app.use(express.json({ limit: "1mb" }));
 
+function backendEnabled() {
+  const configuredSecret = process.env.JWT_SECRET ?? "";
+  return process.env.LUMOS_ENABLE_BACKEND_API === "true"
+    && configuredSecret.length >= 32
+    && !/development-only|replace-with|change-me/i.test(configuredSecret);
+}
+
 function secret() {
-  return new TextEncoder().encode(process.env.JWT_SECRET ?? "development-only-change-me");
+  if (!backendEnabled()) throw new Error("Backend authentication not configured");
+  return new TextEncoder().encode(process.env.JWT_SECRET);
+}
+
+async function requireClinician(request, response, next) {
+  if (!backendEnabled()) {
+    return response.status(503).json({ error: "API clínica desativada." });
+  }
+
+  const authorization = request.headers.authorization ?? "";
+  if (!authorization.startsWith("Bearer ")) {
+    return response.status(401).json({ error: "Autenticação obrigatória." });
+  }
+
+  try {
+    const { payload } = await jwtVerify(authorization.slice(7), secret(), {
+      algorithms: ["HS256"],
+    });
+    if (typeof payload.sub !== "string" || typeof payload.tenant_id !== "string"
+      || typeof payload.category !== "string") {
+      return response.status(401).json({ error: "Sessão inválida." });
+    }
+    request.clinician = payload;
+    next();
+  } catch {
+    return response.status(401).json({ error: "Sessão inválida ou expirada." });
+  }
 }
 
 async function issueToken(professional) {
@@ -48,6 +81,9 @@ app.get("/health", async (_request, response) => {
 });
 
 app.post("/auth/login", async (request, response) => {
+  if (!backendEnabled()) {
+    return response.status(503).json({ error: "Autenticação clínica desativada." });
+  }
   const { cpf, password, category } = request.body ?? {};
   if (!cpf || !password || !category) {
     return response.status(400).json({ error: "CPF, senha e categoria são obrigatórios." });
@@ -149,22 +185,26 @@ async function structureTranscript(transcript, category = "medico") {
   return JSON.parse(text ?? "{}");
 }
 
-app.post("/clinical/structure", async (request, response) => {
-  const { transcript, category } = request.body ?? {};
-  if (!transcript) return response.status(400).json({ error: "Transcrição obrigatória." });
+app.post("/clinical/structure", requireClinician, async (request, response) => {
+  const { transcript } = request.body ?? {};
+  if (typeof transcript !== "string" || !transcript.trim() || transcript.length > 12000) {
+    return response.status(400).json({ error: "Transcrição inválida ou longa demais." });
+  }
+  const category = request.clinician.category === "tecnico"
+    ? "tecnico_enfermagem" : request.clinician.category;
   try {
     response.json({ data: await structureTranscript(transcript, category) });
-  } catch (error) {
-    response.status(502).json({ error: error.message, fallback: { raw_transcript: transcript } });
+  } catch {
+    response.status(502).json({ error: "Falha ao estruturar transcrição." });
   }
 });
 
 const voiceServer = new WebSocketServer({ noServer: true });
 
-server.on("upgrade", (request, socket, head) => {
-  const url = new URL(request.url, `http://${request.headers.host}`);
-  if (url.pathname !== "/voice/stream") return socket.destroy();
-  voiceServer.handleUpgrade(request, socket, head, (client) => voiceServer.emit("connection", client, request));
+// Fail closed: an authenticated, CSRF-resistant voice WebSocket handshake is
+// not implemented. Keep this proxy unreachable until that boundary is tested.
+server.on("upgrade", (_request, socket) => {
+  socket.destroy();
 });
 
 voiceServer.on("connection", (client, request) => {

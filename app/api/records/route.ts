@@ -115,7 +115,7 @@ export async function POST(request: Request) {
       category: "consulta_medica",
       rawTranscript: transcript,
       structuredData: {
-        ...structuredData as Record<string, unknown>,
+        ...(structuredData as Record<string, unknown>),
         status: "draft",
         approvalStatus: "not_clinically_signed",
       },
