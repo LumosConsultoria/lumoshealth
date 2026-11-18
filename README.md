@@ -1,81 +1,82 @@
 # Lumos Health
 
-> **STATUS — 18/11/2026: DEMONSTRAÇÃO, NÃO SISTEMA CLÍNICO.** A interface exibe dados fictícios; o login visual não autentica profissionais. As rotas Next.js de IA, transcrição e registros estão bloqueadas por padrão e sempre bloqueadas em produção. Não há assinatura, prescrição ou pedido de exame clinicamente válido. Não insira dados reais de pacientes.
+**Applied AI clinical workflow prototype · Electronic Health Record (EHR) concept · Next.js / TypeScript / OpenAI**
 
-MVP de Prontuário Eletrônico do Paciente para atenção primária. A experiência foi desenhada para consultas curtas e de alto volume: histórico persistente no topo, timeline única e escuta ambiente com revisão clínica obrigatória.
+> [!WARNING]
+> **Experimental portfolio demo — not a clinical system.** All patient and clinician identities shown in the interface are fictional. The visual login does **not** authenticate a clinician. Clinical API routes are disabled by default and are always disabled in production builds. The project does not produce legally valid clinical signatures, prescriptions, or exam orders. **Never enter real patient information.**
 
-## O que já está no MVP
+Lumos Health explores a more natural clinical documentation experience for high-volume primary care: a patient timeline, ambient conversation transcription, structured AI-assisted notes, and a human-review interface. Its purpose is to demonstrate solution architecture, API integration, and responsible AI design decisions—not a ready-to-deploy healthcare product.
 
-- Workspace clínico responsivo com timeline multiprofissional.
-- Escuta natural da conversa entre profissional e paciente, sem exigir ditado.
-- Transcrição ao vivo por interlocutor com Deepgram Nova-3 (`pt-BR`) e diarização.
-- Estruturação clínica incremental pela OpenAI Responses API, com Structured Outputs e schemas por categoria profissional.
-- Campos sugeridos e aprovação **visual simulada**; ainda não há comprovação de aprovação clínica autenticada no servidor.
-- Conduta sugerida pela IA, com exames e receitas em filas separadas de aprovação; somente itens aprovados entram no atendimento final.
-- Timeline clicável com detalhes do registro clínico, exames solicitados e receitas emitidas.
-- Fluxos visuais simulados de receita e exames (sem emissão de documentos clínicos válidos) e atalhos de teclado.
-- PWA demonstrativa. O fluxo visual não armazena transcrições no localStorage do navegador; sincronização offline clínica não está habilitada.
-- Protótipo de modelos multi-tenant e políticas RLS em PostgreSQL; isolamento entre organizações ainda sem validação de segurança para produção.
-- Implementação experimental de autenticação JWT no backend, desativada por padrão; a tela demonstração não implementa autenticação clínica.
-- Docker Compose com PostgreSQL, Redis e API.
+## Technical overview
 
-## Desenvolvimento web
+| Layer | Technologies / design |
+| --- | --- |
+| Frontend | Next.js, React, TypeScript, responsive clinical workspace |
+| AI structuring | OpenAI Responses API and strict JSON Schema structured outputs |
+| Speech | Deepgram Nova-3, Brazilian Portuguese transcription and speaker diarization |
+| Application backend | Node.js / Express, experimental JWT-protected clinician endpoint |
+| Data | Drizzle ORM, Cloudflare D1 demonstration schema, PostgreSQL / row-level-security concepts |
+| Infrastructure | Redis, Docker Compose, PWA shell, local development |
+| Quality controls | Node.js tests, source safety contracts, TypeScript type checks, ESLint, CI |
 
-Requer Node.js 22 ou superior.
+### Features demonstrated
+
+- Multiprofessional patient timeline with synthetic consultation history.
+- Ambient conversation transcription flow with speaker attribution.
+- AI-assisted extraction of clinical information with role-specific structured schemas.
+- Human-review **UI** for suggested clinical information, medications, and tests.
+- Simulated prescription and exam-request workflows; **no actual clinical orders are issued**.
+- Local-only unsigned draft persistence in the explicitly enabled synthetic demo.
+- A responsive interface and keyboard shortcuts for exploring the workflow.
+
+**Important distinction:** a review/approval control in the UI is not proof of authenticated, server-enforced clinical approval. That production-critical workflow remains unimplemented and unvalidated.
+
+## Repository structure
+
+```text
+app/                 Next.js frontend and experimental API routes
+server/src/          Express backend and speech/AI integration prototype
+db/                  Drizzle data model and D1 adapter
+infra/postgres/      PostgreSQL schema and access-control concepts
+public/              PWA assets and a restricted service worker cache
+tests/               Structural and safety-focused automated tests
+PORTFOLIO_CASE_STUDY.md   Architecture, limitations, and risk assessment
+```
+
+## Run the UI locally
+
+**Prerequisite:** Node.js 22 or later.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-A interface abre em `http://localhost:3000`.
+Open the local development address displayed by the server (usually `http://localhost:3000`). The visual experience uses fictional information. API-backed features will be unavailable unless you explicitly enable the local demonstration gate.
 
-## Backend clínico
+### Optional: local synthetic-data API demo
 
-Nunca envie nem versione chaves de API. No PowerShell, crie os arquivos locais ignorados pelo Git:
+1. Copy `.env.example` to `.env.local` and `server/.env.example` to `server/.env`.
+2. Use **test-only** credentials for optional OpenAI and Deepgram integrations; never commit secrets.
+3. Only for development on your own machine, configure `LUMOS_ENABLE_LOCAL_DEMO_API=true` in `.env.local` while `NODE_ENV=development`.
+4. Access the project via `localhost`. Do not expose this demo service to a public network or enter real healthcare data.
 
-```powershell
-Copy-Item .env.example .env.local
-Copy-Item server/.env.example server/.env
-```
+The Next.js routes `/api/records`, `/api/structure`, and `/api/deepgram/token` are otherwise blocked with HTTP 403. The local gate is **not authentication**.
 
-Preencha:
+The separate Express backend is disabled unless `LUMOS_ENABLE_BACKEND_API=true` and a sufficiently strong `JWT_SECRET` are configured. This experimental authorization layer is **not approved for production use**.
 
-- `.env.local`: `OPENAI_API_KEY` e `DEEPGRAM_API_KEY`. `NEXT_PUBLIC_VOICE_WS_URL` é opcional para usar o proxy Node local.
-- `server/.env`: `DEEPGRAM_API_KEY`, `OPENAI_API_KEY` e as configurações do backend.
-
-O navegador nunca recebe as chaves permanentes. O site emite um token Deepgram temporário de 30 segundos para abrir a transcrição, e a estruturação OpenAI acontece no servidor. Em seguida, inicie:
+For optional local infrastructure:
 
 ```bash
 docker compose up --build
 ```
 
-A API abre em `http://localhost:4000`. As chaves de fornecedores permanecem somente no backend.
+PostgreSQL, Redis, and the API are bound to `127.0.0.1` by the supplied Compose configuration. The unauthenticated voice WebSocket proxy is intentionally disabled.
 
-Em produção, cadastre `OPENAI_API_KEY` e `DEEPGRAM_API_KEY` como segredos do projeto. O áudio é encaminhado durante a sessão e não é persistido pelo código do MVP; o prontuário só recebe o texto revisado e confirmado pelo profissional.
-
-## Atalhos
-
-- `Ctrl + Space`: iniciar/finalizar escuta.
-- `Alt + R`: emitir receita.
-- `Alt + E`: solicitar exame.
-
-> Os dados exibidos na demonstração são inteiramente fictícios.
-
-## Limites de segurança para a demonstração
-
-- Por padrão, `/api/records`, `/api/structure` e `/api/deepgram/token` retornam HTTP 403, inclusive em implantações públicas.
-- Para uma **demonstração LOCAL com dados inteiramente fictícios**, use `NODE_ENV=development` e defina `LUMOS_ENABLE_LOCAL_DEMO_API=true` em `.env.local`. O serviço deve permanecer acessível apenas no próprio computador. Esta chave **não é autenticação** e não autoriza dados reais.
-- Mesmo nessa demonstração, `/api/records` persiste somente **rascunho não assinado**, sem transformar sugestões de IA em prescrições ou solicitações de exames.
-- O backend Express exige `LUMOS_ENABLE_BACKEND_API=true` **e** `JWT_SECRET` forte para liberar login e `/clinical/structure`; esta API também não está certificada para produção.
-- O proxy WebSocket `/voice/stream` foi bloqueado até existir autenticação/controle de origem testados. Use a transcrição direta temporária apenas no ambiente local explicitamente habilitado.
-- O Docker Compose publica PostgreSQL, Redis e API somente em `127.0.0.1`.
-- Nenhuma trilha de aprovação clínica, LGPD, RLS ou política de retenção deve ser considerada validada por estes bloqueios. É necessária análise independente antes de qualquer uso real.
-
-## Verificações automatizadas
+## Validation
 
 ```bash
-node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs
+node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs tests/sw-cache.test.mjs
 node --check server/src/index.mjs
 npm ci
 npx tsc --noEmit
@@ -83,4 +84,22 @@ npm run lint
 npm test
 ```
 
-As verificações não substituem testes integrados de autenticação, isolamento entre tenants, autorização, segurança de dados e revisão clínica.
+The included CI workflow runs safety-contract tests, type checking, linting, and a build/test step. **Passing these checks does not demonstrate clinical correctness or production security.**
+
+## Security, privacy, and responsible AI
+
+- Only fictional patient and professional data may be used.
+- Clinical APIs fail closed by default; real-world clinical deployment is out of scope.
+- Suggested examinations and medications must **never** be treated as approved prescriptions or orders.
+- Local demo records are unsigned drafts. The UI no longer stores clinical transcripts in browser `localStorage`.
+- The PWA service worker caches only explicitly allowlisted public shell resources, not arbitrary API responses.
+- AI-generated clinical content may be incomplete or inaccurate and requires qualified professional review.
+- Tenant isolation, server-enforced human approval, retention policies, authentication, clinical quality, privacy compliance, and production observability all require further implementation and independent validation.
+
+**This repository is a portfolio prototype, not a regulated medical product or a system for real patient records.**
+
+## Portfolio
+
+- [Lumos Consultoria](https://lumosconsultoria.com)
+- [Lumos Consultoria on GitHub](https://github.com/LumosConsultoria)
+- [Architecture and limitations](PORTFOLIO_CASE_STUDY.md)
