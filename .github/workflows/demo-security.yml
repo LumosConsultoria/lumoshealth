@@ -21,7 +21,7 @@ jobs:
           node-version: "22"
           cache: npm
       - name: Test demo safety guard and contracts
-        run: node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs
+        run: node --test tests/demo-security.test.mjs tests/clinical-safety-contract.test.mjs tests/sw-cache.test.mjs
       - name: Check backend JavaScript syntax
         run: node --check server/src/index.mjs
       - name: Install dependencies
